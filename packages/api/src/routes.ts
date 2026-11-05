@@ -7,6 +7,8 @@ import type { RowDataPacket } from 'mysql2/promise';
 import { authenticate, clearAuthCookies, consumeRefreshCookie, getUserById, hashPassword, requireRoles, revokeRefreshToken, revokeUserRefreshTokens, setAuthCookies, verifyPassword } from './auth.js';
 import { config } from './config.js';
 import type { AuthRequest, UserRole, UserStatus } from './types.js';
+import { loginController } from './controllers/auth.controller.js';
+import { loginSchemaForController } from './schemas/auth.schema.js';
 
 const roles = ['Admin', 'Manager', 'Sale'] as const;
 const loginSchema = z.object({ email: z.string().email().max(254), password: z.string().min(1).max(128) });

@@ -16,6 +16,7 @@ const configSchema = z.object({
   DB_PASSWORD: z.string().default(''),
   DB_NAME: z.string().default('nexus_crm'),
   JWT_SECRET: z.string().min(32).default(developmentSecret),
+  CRM_PROVIDER_API_KEY: z.string().optional(),
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   WEB_ORIGIN: z.string().url().default('http://localhost:5173'),
 }).superRefine((values, context) => {
