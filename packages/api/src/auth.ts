@@ -193,4 +193,4 @@ export function revokeRefreshToken(rawToken: string | undefined): void {
     UPDATE refresh_tokens SET revoked_at = CURRENT_TIMESTAMP
     WHERE token_hash = ? AND revoked_at IS NULL
   `).run(hashToken(rawToken));
-}
+}1
