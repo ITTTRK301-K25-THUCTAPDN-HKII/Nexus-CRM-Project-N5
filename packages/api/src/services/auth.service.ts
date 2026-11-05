@@ -7,12 +7,12 @@ export type LoginResult =
   | { ok: false };
 
 /** Business rules: normalize email, verify password, and enforce account status. */
-export function loginWithEmailAndPassword(email: string, password: string): LoginResult {
-  const credentials = findCredentialsByEmail(email.trim().toLowerCase());
+export async function loginWithEmailAndPassword(email: string, password: string): Promise<LoginResult> {
+  const credentials = await findCredentialsByEmail(email.trim().toLowerCase());
   if (!credentials || credentials.user.status !== 'ACTIVE' ||
       !verifyPassword(password, credentials.passwordHash)) {
     return { ok: false };
   }
-  const user = findUserById(credentials.user.id);
+  const user = await findUserById(credentials.user.id);
   return user?.status === 'ACTIVE' ? { ok: true, user } : { ok: false };
 }

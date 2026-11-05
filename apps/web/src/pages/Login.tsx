@@ -50,7 +50,7 @@ export function Login() {
             <label htmlFor="email">Email</label>
             <div className="input-wrap"><Mail size={18} /><input id="email" type="email" autoComplete="username" required maxLength={254} placeholder="you@company.com" value={email} onChange={(event) => setEmail(event.target.value)} /></div>
             <div className="label-row"><label htmlFor="password">Mật khẩu</label><Link to="/forgot-password">Quên mật khẩu?</Link></div>
-            <div className="input-wrap"><LockKeyhole size={18} /><input id="password" type="password" autoComplete="current-password" required maxLength={128} placeholder="Nhập mật khẩu" value={password} onChange={(event) => setPassword(event.target.value)} /></div>
+            <div className="input-wrap"><LockKeyhole size={18} /><input id="password" type="password" autoComplete="current-password" required minLength={8} maxLength={128} placeholder="Nhập mật khẩu" value={password} onChange={(event) => setPassword(event.target.value)} /></div>
             {error && <div className="alert error" role="alert">{error}</div>}
             <button className="primary-button" type="submit" disabled={submitting}>
               {submitting ? 'Đang đăng nhập...' : <>Đăng nhập <ArrowRight size={17} /></>}

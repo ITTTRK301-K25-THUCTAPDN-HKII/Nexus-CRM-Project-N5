@@ -4,11 +4,10 @@ import { createHash, randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import { db, execute, query } from './db.js';
 import type { RowDataPacket } from 'mysql2/promise';
-import { authenticate, clearAuthCookies, consumeRefreshCookie, getUserById, hashPassword, requireRoles, revokeRefreshToken, revokeUserRefreshTokens, setAuthCookies, verifyPassword } from './auth.js';
+import { authenticate, clearAuthCookies, consumeRefreshCookie, getUserById, hashPassword, requireRoles, revokeRefreshToken, revokeUserRefreshTokens } from './auth.js';
 import { config } from './config.js';
 import type { AuthRequest, UserRole, UserStatus } from './types.js';
 import { loginController } from './controllers/auth.controller.js';
-import { loginSchemaForController } from './schemas/auth.schema.js';
 
 const roles = ['Admin', 'Manager', 'Sale'] as const;
 const loginSchema = z.object({ email: z.string().email().max(254), password: z.string().min(1).max(128) });
@@ -25,17 +24,11 @@ function makeLoginKey(request: AuthRequest): string {
 }
 export const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 5, standardHeaders: 'draft-8', legacyHeaders: false, keyGenerator: makeLoginKey, skipSuccessfulRequests: true, handler: (_req, res) => res.status(429).json({ message: 'Quá nhiều lần đăng nhập thất bại. Vui lòng thử lại sau 15 phút.' }) });
 export const forgotLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 5, standardHeaders: 'draft-8', legacyHeaders: false, handler: (_req, res) => res.status(429).json({ message: 'Bạn đã yêu cầu quá nhiều lần. Vui lòng thử lại sau.' }) });
+export const resetLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 5, standardHeaders: 'draft-8', legacyHeaders: false, handler: (_req, res) => res.status(429).json({ message: 'Bạn đã thử đặt lại mật khẩu quá nhiều lần. Vui lòng thử lại sau 15 phút.' }) });
 
 interface UserRow extends RowDataPacket { id: number; name: string; email: string; role: UserRole; status: UserStatus; password_hash?: string; createdAt?: Date; }
 const router = Router();
-router.post('/auth/login', loginLimiter, async (req, res) => {
-  const parsed = loginSchema.safeParse(req.body); if (!parsed.success) { res.status(400).json(validationError(parsed.error)); return; }
-  const rows = await query<UserRow[]>('SELECT id, password_hash, status FROM users WHERE email = ?', [parsed.data.email.trim().toLowerCase()]);
-  const row = rows[0];
-  if (!row || row.status !== 'ACTIVE' || !verifyPassword(parsed.data.password, row.password_hash!)) { res.status(401).json({ message: 'Email hoặc mật khẩu không chính xác, hoặc tài khoản chưa hoạt động.' }); return; }
-  const user = await getUserById(row.id); if (!user) { res.status(401).json({ message: 'Tài khoản không tồn tại.' }); return; }
-  await setAuthCookies(res, user); res.json({ user });
-});
+router.post('/auth/login', loginLimiter, loginController);
 router.post('/auth/refresh', async (req, res) => { const user = await consumeRefreshCookie(req as AuthRequest, res); if (!user) { res.status(401).json({ message: 'Refresh token không hợp lệ hoặc đã hết hạn.' }); return; } res.json({ user }); });
 router.post('/auth/logout', async (req, res) => { await revokeRefreshToken(req.cookies?.nexus_refresh as string | undefined); clearAuthCookies(res); res.status(204).end(); });
 router.get('/auth/me', authenticate, (req, res) => res.json({ user: (req as AuthRequest).user }));
@@ -52,7 +45,7 @@ router.post('/auth/forgot-password', forgotLimiter, async (req, res) => {
   }
   res.json({ message: 'Nếu email tồn tại, hướng dẫn đặt lại mật khẩu đã được gửi.' });
 });
-router.post('/auth/reset-password', async (req, res) => {
+router.post('/auth/reset-password', resetLimiter, async (req, res) => {
   const parsed = resetSchema.safeParse(req.body); if (!parsed.success) { res.status(400).json(validationError(parsed.error)); return; }
   const rows = await query<(RowDataPacket & { id: number; user_id: number; expires_at: Date; used_at: Date | null })[]>('SELECT id, user_id, expires_at, used_at FROM password_reset_tokens WHERE token_hash = ?', [tokenHash(parsed.data.token)]);
   const reset = rows[0]; if (!reset || reset.used_at || new Date(reset.expires_at).getTime() <= Date.now()) { res.status(400).json({ message: 'Liên kết đặt lại mật khẩu không hợp lệ hoặc đã hết hạn.' }); return; }

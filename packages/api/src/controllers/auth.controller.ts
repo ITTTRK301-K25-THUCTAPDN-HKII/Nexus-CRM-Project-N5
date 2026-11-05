@@ -3,7 +3,7 @@ import { setAuthCookies } from '../auth.js';
 import { loginSchemaForController } from '../schemas/auth.schema.js';
 import { loginWithEmailAndPassword } from '../services/auth.service.js';
 
-export function loginController(request: Request, response: Response): void {
+export async function loginController(request: Request, response: Response): Promise<void> {
   const parsed = loginSchemaForController.safeParse(request.body);
   if (!parsed.success) {
     response.status(400).json({
@@ -13,11 +13,11 @@ export function loginController(request: Request, response: Response): void {
     return;
   }
 
-  const result = loginWithEmailAndPassword(parsed.data.email, parsed.data.password);
+  const result = await loginWithEmailAndPassword(parsed.data.email, parsed.data.password);
   if (!result.ok) {
     response.status(401).json({ message: 'Email hoặc mật khẩu không chính xác, hoặc tài khoản chưa hoạt động.' });
     return;
   }
-  const tokens = setAuthCookies(response, result.user);
-  response.json({ user: result.user, ...tokens });
+  await setAuthCookies(response, result.user);
+  response.json({ user: result.user });
 }

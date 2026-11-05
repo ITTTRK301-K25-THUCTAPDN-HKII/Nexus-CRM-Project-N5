@@ -1,26 +1,19 @@
-import { db } from '../db.js';
-import type { AuthUser, UserStatus } from '../types.js';
+import { query } from '../db.js';
+import type { RowDataPacket } from 'mysql2/promise';
+import type { AuthUser } from '../types.js';
 
-export interface UserCredentials {
-  user: AuthUser;
-  passwordHash: string;
-}
+interface CredentialRow extends RowDataPacket, AuthUser { passwordHash: string; }
+export interface UserCredentials { user: AuthUser; passwordHash: string; }
 
-/** Data access layer: SQL stays inside repositories. */
-export function findCredentialsByEmail(email: string): UserCredentials | undefined {
-  const row = db.prepare(`
-    SELECT id, name, email, role, status, password_hash AS passwordHash
-    FROM users WHERE email = ? COLLATE NOCASE
-  `).get(email) as (AuthUser & {
-    status: UserStatus;
-    passwordHash: string;
-  }) | undefined;
+export async function findCredentialsByEmail(email: string): Promise<UserCredentials | undefined> {
+  const rows = await query<CredentialRow[]>('SELECT id, name, email, role, status, password_hash AS passwordHash FROM users WHERE email = ?', [email]);
+  const row = rows[0];
   if (!row) return undefined;
   const { passwordHash, ...user } = row;
   return { user, passwordHash };
 }
 
-export function findUserById(id: number): AuthUser | undefined {
-  return db.prepare('SELECT id, name, email, role, status FROM users WHERE id = ?')
-    .get(id) as AuthUser | undefined;
+export async function findUserById(id: number): Promise<AuthUser | undefined> {
+  const rows = await query<(RowDataPacket & AuthUser)[]>('SELECT id, name, email, role, status FROM users WHERE id = ?', [id]);
+  return rows[0];
 }

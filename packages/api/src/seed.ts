@@ -12,7 +12,7 @@ export async function seedDevelopmentUsers() {
   if (config.NODE_ENV !== 'development') return;
   for (const user of seedUsers) {
     await execute(`INSERT INTO users (name, email, password_hash, role)
-      VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE email = VALUES(email)`,
+      VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE id = id`,
     [user.name, user.email, bcrypt.hashSync(user.password, 12), user.role]);
   }
 }
