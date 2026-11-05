@@ -6,6 +6,7 @@ const configSchema = z.object({
   PORT: z.coerce.number().int().positive().default(3001),
   DATABASE_PATH: z.string().default('./data/nexus.sqlite'),
   JWT_SECRET: z.string().min(32).default(developmentSecret),
+  CRM_PROVIDER_API_KEY: z.string().optional(),
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   WEB_ORIGIN: z.string().url().default('http://localhost:5173'),
 }).superRefine((values, context) => {

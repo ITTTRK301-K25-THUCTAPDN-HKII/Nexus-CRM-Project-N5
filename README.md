@@ -7,6 +7,19 @@ Demo local cho các task auth trong Sprint 1: API reset mật khẩu, Auth/RBAC 
 - Node.js 20.19+ hoặc 22.12+ (đã kiểm tra với Node 24).
 - npm.
 
+## Cấu trúc source
+
+Đây là npm workspaces monorepo: `apps/web` chứa React + Vite + Tailwind CSS; `packages/api` chứa Express API. Trong API, `routes.ts` khai báo endpoint, `controllers/` nhận/trả HTTP, `services/` xử lý nghiệp vụ, `repositories/` truy cập dữ liệu, và `schemas/` kiểm tra input. Luồng login mẫu đã được tách theo các lớp này; các luồng auth còn lại đang ở `routes.ts` và có thể chuyển dần khi mở rộng.
+
+Tạo file môi trường cục bộ từ mẫu:
+
+```powershell
+Copy-Item packages/api/.env.example packages/api/.env
+Copy-Item apps/web/.env.example apps/web/.env
+```
+
+Đặt API key bí mật ở `packages/api/.env` (ví dụ `CRM_PROVIDER_API_KEY`). Chỉ biến `VITE_*` mới được đưa vào bundle frontend, vì vậy không đặt API key bí mật ở `apps/web/.env`.
+
 ## Chạy thử
 
 ```powershell
@@ -34,7 +47,7 @@ Database SQLite được tạo tại `packages/api/data/nexus.sqlite`. Email kh�
 - Đăng nhập và gọi `POST /api/auth/refresh`; refresh cookie cũ bị xoay vòng/thu hồi. Logout thu hồi refresh cookie hiện tại.
 - Gửi yêu cầu quên mật khẩu, mở reset link trong hộp thư demo, đổi mật khẩu; token chỉ dùng một lần, hết hạn sau 15 phút và refresh session cũ bị thu hồi.
 
-API sử dụng access JWT 15 phút và refresh token ngẫu nhiên 7 ngày; chỉ hash refresh/reset token được lưu trong SQLite. Cả hai token phía trình duyệt nằm trong cookie HttpOnly, SameSite=Lax; cookie Secure bật trong production.
+API kiểm tra email và mật khẩu bằng bcrypt (cost 12), chỉ cho phép tài khoản `ACTIVE` đăng nhập, rồi trả `accessToken` (JWT, 15 phút) và `refreshToken` (JWT, 7 ngày) trong JSON. Token cũng được đặt trong cookie HttpOnly, SameSite=Lax; cookie Secure bật trong production. Chỉ hash refresh/reset token được lưu trong SQLite; refresh token được xoay vòng khi làm mới phiên.
 
 ## Kiểm tra
 

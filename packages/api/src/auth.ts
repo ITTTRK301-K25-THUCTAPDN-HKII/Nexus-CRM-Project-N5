@@ -10,6 +10,12 @@ const accessCookie = 'nexus_access';
 const refreshCookie = 'nexus_refresh';
 const accessTtlSeconds = 15 * 60;
 const refreshTtlMs = 7 * 24 * 60 * 60 * 1000;
+const refreshTtlSeconds = refreshTtlMs / 1000;
+
+export interface AuthTokens {
+  accessToken: string;
+  refreshToken: string;
+}
 
 const cookieOptions = (path: string): CookieOptions => ({
   httpOnly: true,
@@ -29,7 +35,15 @@ function issueAccessToken(user: AuthUser): string {
 }
 
 function createRefreshToken(userId: number): string {
-  const rawToken = randomBytes(48).toString('base64url');
+  const rawToken = jwt.sign({
+    sub: String(userId),
+    jti: randomBytes(32).toString('base64url'),
+    token_use: 'refresh',
+  }, config.JWT_SECRET, {
+    expiresIn: refreshTtlSeconds,
+    issuer: 'nexus-crm',
+    audience: 'nexus-web',
+  });
   db.prepare(`
     INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
     VALUES (?, ?, ?)
@@ -37,15 +51,20 @@ function createRefreshToken(userId: number): string {
   return rawToken;
 }
 
-export function setAuthCookies(response: Response, user: AuthUser): void {
-  response.cookie(accessCookie, issueAccessToken(user), {
+export function setAuthCookies(response: Response, user: AuthUser): AuthTokens {
+  const tokens = {
+    accessToken: issueAccessToken(user),
+    refreshToken: createRefreshToken(user.id),
+  };
+  response.cookie(accessCookie, tokens.accessToken, {
     ...cookieOptions('/api'),
     maxAge: accessTtlSeconds * 1000,
   });
-  response.cookie(refreshCookie, createRefreshToken(user.id), {
+  response.cookie(refreshCookie, tokens.refreshToken, {
     ...cookieOptions('/api/auth'),
     maxAge: refreshTtlMs,
   });
+  return tokens;
 }
 
 export function clearAuthCookies(response: Response): void {
@@ -109,11 +128,25 @@ export function requireRoles(...roles: UserRole[]) {
 
 interface RotatedSession {
   user: AuthUser;
-  refreshToken: string;
+  tokens: AuthTokens;
 }
 
 export function rotateRefreshToken(rawToken: string | undefined): RotatedSession | undefined {
   if (!rawToken) return undefined;
+  let payload: jwt.JwtPayload;
+  try {
+    const verified = jwt.verify(rawToken, config.JWT_SECRET, {
+      issuer: 'nexus-crm',
+      audience: 'nexus-web',
+    });
+    if (typeof verified === 'string' || verified.token_use !== 'refresh' || !verified.sub || !verified.jti) {
+      return undefined;
+    }
+    payload = verified;
+  } catch (error) {
+    if (error instanceof jwt.JsonWebTokenError || error instanceof jwt.TokenExpiredError) return undefined;
+    throw error;
+  }
   const tokenHash = hashToken(rawToken);
   const existing = db.prepare(`
     SELECT id, user_id, expires_at, revoked_at
@@ -125,7 +158,7 @@ export function rotateRefreshToken(rawToken: string | undefined): RotatedSession
     revoked_at: string | null;
   } | undefined;
 
-  if (!existing) return undefined;
+  if (!existing || String(existing.user_id) !== payload.sub) return undefined;
   if (existing.revoked_at) {
     db.prepare('UPDATE refresh_tokens SET revoked_at = CURRENT_TIMESTAMP WHERE user_id = ? AND revoked_at IS NULL')
       .run(existing.user_id);
@@ -152,24 +185,24 @@ export function rotateRefreshToken(rawToken: string | undefined): RotatedSession
   });
   const nextToken = rotate();
   if (!nextToken) return undefined;
-  return { user, refreshToken: nextToken };
+  return { user, tokens: { accessToken: issueAccessToken(user), refreshToken: nextToken } };
 }
 
-export function consumeRefreshCookie(request: AuthRequest, response: Response): AuthUser | undefined {
+export function consumeRefreshCookie(request: AuthRequest, response: Response): (AuthUser & AuthTokens) | undefined {
   const session = rotateRefreshToken(request.cookies?.[refreshCookie] as string | undefined);
   if (!session) {
     clearAuthCookies(response);
     return undefined;
   }
-  response.cookie(accessCookie, issueAccessToken(session.user), {
+  response.cookie(accessCookie, session.tokens.accessToken, {
     ...cookieOptions('/api'),
     maxAge: accessTtlSeconds * 1000,
   });
-  response.cookie(refreshCookie, session.refreshToken, {
+  response.cookie(refreshCookie, session.tokens.refreshToken, {
     ...cookieOptions('/api/auth'),
     maxAge: refreshTtlMs,
   });
-  return session.user;
+  return { ...session.user, ...session.tokens };
 }
 
 export function verifyPassword(password: string, passwordHash: string): boolean {

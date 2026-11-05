@@ -12,17 +12,14 @@ import {
   requireRoles,
   revokeRefreshToken,
   revokeUserRefreshTokens,
-  setAuthCookies,
-  verifyPassword,
 } from './auth.js';
 import { config } from './config.js';
 import type { AuthRequest, UserRole, UserStatus } from './types.js';
+import { loginController } from './controllers/auth.controller.js';
+import { loginSchemaForController } from './schemas/auth.schema.js';
 
 const roles = ['Admin', 'Manager', 'Sale'] as const;
-const loginSchema = z.object({
-  email: z.string().email().max(254),
-  password: z.string().min(1).max(128),
-});
+const loginSchema = loginSchemaForController;
 const forgotSchema = z.object({ email: z.string().email().max(254) });
 const resetSchema = z.object({
   token: z.string().min(32).max(256),
@@ -82,31 +79,7 @@ export const forgotLimiter = rateLimit({
 
 const router = Router();
 
-router.post('/auth/login', loginLimiter, (request, response) => {
-  const parsed = loginSchema.safeParse(request.body);
-  if (!parsed.success) {
-    response.status(400).json(validationError(parsed.error));
-    return;
-  }
-
-  const email = parsed.data.email.trim().toLowerCase();
-  const row = db.prepare(`
-    SELECT id, password_hash, status FROM users WHERE email = ? COLLATE NOCASE
-  `).get(email) as { id: number; password_hash: string; status: UserStatus } | undefined;
-
-  if (!row || row.status !== 'ACTIVE' || !verifyPassword(parsed.data.password, row.password_hash)) {
-    response.status(401).json({ message: 'Email hoặc mật khẩu không chính xác, hoặc tài khoản chưa hoạt động.' });
-    return;
-  }
-
-  const user = getUserById(row.id);
-  if (!user) {
-    response.status(401).json({ message: 'Tài khoản không tồn tại.' });
-    return;
-  }
-  setAuthCookies(response, user);
-  response.json({ user });
-});
+router.post('/auth/login', loginLimiter, loginController);
 
 router.post('/auth/refresh', (request, response) => {
   const user = consumeRefreshCookie(request as AuthRequest, response);
@@ -114,7 +87,8 @@ router.post('/auth/refresh', (request, response) => {
     response.status(401).json({ message: 'Refresh token không hợp lệ hoặc đã hết hạn.' });
     return;
   }
-  response.json({ user });
+  const { accessToken, refreshToken, ...userData } = user;
+  response.json({ user: userData, accessToken, refreshToken });
 });
 
 router.post('/auth/logout', (request, response) => {
