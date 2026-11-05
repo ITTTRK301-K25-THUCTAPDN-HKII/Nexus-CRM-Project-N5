@@ -1,10 +1,20 @@
-import 'dotenv/config';
+import dotenv from 'dotenv';
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { z } from 'zod';
+
+const localEnv = resolve(process.cwd(), '.env');
+const workspaceEnv = resolve(process.cwd(), '../../.env');
+dotenv.config({ path: existsSync(localEnv) ? localEnv : workspaceEnv });
 
 const developmentSecret = 'local-demo-secret-change-before-deploy-32';
 const configSchema = z.object({
   PORT: z.coerce.number().int().positive().default(3001),
-  DATABASE_PATH: z.string().default('./data/nexus.sqlite'),
+  DB_HOST: z.string().default('127.0.0.1'),
+  DB_PORT: z.coerce.number().int().positive().default(3306),
+  DB_USER: z.string().default('root'),
+  DB_PASSWORD: z.string().default(''),
+  DB_NAME: z.string().default('nexus_crm'),
   JWT_SECRET: z.string().min(32).default(developmentSecret),
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
   WEB_ORIGIN: z.string().url().default('http://localhost:5173'),

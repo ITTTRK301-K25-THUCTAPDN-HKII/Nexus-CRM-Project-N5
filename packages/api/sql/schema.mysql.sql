@@ -1,9 +1,14 @@
 -- Nexus CRM: MySQL 8.0 schema (16 tables)
--- Run against an empty database. Uses InnoDB for foreign-key enforcement.
+-- Run this whole file in MySQL Workbench (Query > Execute All).
+CREATE DATABASE IF NOT EXISTS nexus_crm
+  CHARACTER SET utf8mb4
+  COLLATE utf8mb4_0900_ai_ci;
+USE nexus_crm;
+
 SET NAMES utf8mb4;
 SET time_zone = '+00:00';
 
-CREATE TABLE roles (
+CREATE TABLE IF NOT EXISTS roles (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   name VARCHAR(50) NOT NULL,
   description VARCHAR(255) NULL,
@@ -12,9 +17,9 @@ CREATE TABLE roles (
   CONSTRAINT uq_roles_name UNIQUE (name)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
-CREATE TABLE users (
+CREATE TABLE IF NOT EXISTS users (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
-  role_id BIGINT UNSIGNED NOT NULL,
+  role VARCHAR(50) NOT NULL,
   name VARCHAR(100) NOT NULL,
   email VARCHAR(254) NOT NULL,
   password_hash VARCHAR(255) NOT NULL,
@@ -23,12 +28,12 @@ CREATE TABLE users (
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   CONSTRAINT uq_users_email UNIQUE (email),
-  KEY idx_users_role_id (role_id),
-  CONSTRAINT fk_users_role FOREIGN KEY (role_id) REFERENCES roles(id)
+  KEY idx_users_role (role),
+  CONSTRAINT fk_users_role FOREIGN KEY (role) REFERENCES roles(name)
     ON UPDATE CASCADE ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
-CREATE TABLE refresh_tokens (
+CREATE TABLE IF NOT EXISTS refresh_tokens (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   user_id BIGINT UNSIGNED NOT NULL,
   token_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
@@ -43,7 +48,7 @@ CREATE TABLE refresh_tokens (
     ON UPDATE CASCADE ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
-CREATE TABLE accounts (
+CREATE TABLE IF NOT EXISTS accounts (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   owner_user_id BIGINT UNSIGNED NOT NULL,
   name VARCHAR(160) NOT NULL,
@@ -61,7 +66,7 @@ CREATE TABLE accounts (
     ON UPDATE CASCADE ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
-CREATE TABLE leads (
+CREATE TABLE IF NOT EXISTS leads (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   owner_user_id BIGINT UNSIGNED NOT NULL,
   converted_account_id BIGINT UNSIGNED NULL,
@@ -85,7 +90,7 @@ CREATE TABLE leads (
     ON UPDATE CASCADE ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
-CREATE TABLE contacts (
+CREATE TABLE IF NOT EXISTS contacts (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   account_id BIGINT UNSIGNED NOT NULL,
   owner_user_id BIGINT UNSIGNED NOT NULL,
@@ -106,7 +111,7 @@ CREATE TABLE contacts (
     ON UPDATE CASCADE ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
-CREATE TABLE deals (
+CREATE TABLE IF NOT EXISTS deals (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   account_id BIGINT UNSIGNED NOT NULL,
   contact_id BIGINT UNSIGNED NULL,
@@ -134,7 +139,7 @@ CREATE TABLE deals (
     ON UPDATE CASCADE ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
-CREATE TABLE deal_history (
+CREATE TABLE IF NOT EXISTS deal_history (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   deal_id BIGINT UNSIGNED NOT NULL,
   changed_by_user_id BIGINT UNSIGNED NULL,
@@ -153,7 +158,7 @@ CREATE TABLE deal_history (
     ON UPDATE CASCADE ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
-CREATE TABLE products (
+CREATE TABLE IF NOT EXISTS products (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   sku VARCHAR(80) NOT NULL,
   name VARCHAR(160) NOT NULL,
@@ -168,7 +173,7 @@ CREATE TABLE products (
   CONSTRAINT chk_products_unit_price CHECK (unit_price >= 0)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
-CREATE TABLE quotes (
+CREATE TABLE IF NOT EXISTS quotes (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   quote_number VARCHAR(40) NOT NULL,
   deal_id BIGINT UNSIGNED NOT NULL,
@@ -196,7 +201,7 @@ CREATE TABLE quotes (
     ON UPDATE CASCADE ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
-CREATE TABLE quote_items (
+CREATE TABLE IF NOT EXISTS quote_items (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   quote_id BIGINT UNSIGNED NOT NULL,
   product_id BIGINT UNSIGNED NULL,
@@ -217,7 +222,7 @@ CREATE TABLE quote_items (
     ON UPDATE CASCADE ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
-CREATE TABLE tasks (
+CREATE TABLE IF NOT EXISTS tasks (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   assigned_to_user_id BIGINT UNSIGNED NOT NULL,
   created_by_user_id BIGINT UNSIGNED NULL,
@@ -239,9 +244,6 @@ CREATE TABLE tasks (
   KEY idx_tasks_account (account_id),
   KEY idx_tasks_contact (contact_id),
   KEY idx_tasks_deal (deal_id),
-  CONSTRAINT chk_tasks_one_parent CHECK (
-    (lead_id IS NOT NULL) + (account_id IS NOT NULL) + (contact_id IS NOT NULL) + (deal_id IS NOT NULL) <= 1
-  ),
   CONSTRAINT fk_tasks_assignee FOREIGN KEY (assigned_to_user_id) REFERENCES users(id)
     ON UPDATE CASCADE ON DELETE RESTRICT,
   CONSTRAINT fk_tasks_creator FOREIGN KEY (created_by_user_id) REFERENCES users(id)
@@ -256,7 +258,7 @@ CREATE TABLE tasks (
     ON UPDATE CASCADE ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
-CREATE TABLE appointments (
+CREATE TABLE IF NOT EXISTS appointments (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   organizer_user_id BIGINT UNSIGNED NOT NULL,
   lead_id BIGINT UNSIGNED NULL,
@@ -277,9 +279,6 @@ CREATE TABLE appointments (
   KEY idx_appointments_contact (contact_id),
   KEY idx_appointments_deal (deal_id),
   CONSTRAINT chk_appointments_time CHECK (ends_at > starts_at),
-  CONSTRAINT chk_appointments_one_parent CHECK (
-    (lead_id IS NOT NULL) + (account_id IS NOT NULL) + (contact_id IS NOT NULL) + (deal_id IS NOT NULL) <= 1
-  ),
   CONSTRAINT fk_appointments_organizer FOREIGN KEY (organizer_user_id) REFERENCES users(id)
     ON UPDATE CASCADE ON DELETE RESTRICT,
   CONSTRAINT fk_appointments_lead FOREIGN KEY (lead_id) REFERENCES leads(id)
@@ -292,7 +291,7 @@ CREATE TABLE appointments (
     ON UPDATE CASCADE ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
-CREATE TABLE activities (
+CREATE TABLE IF NOT EXISTS activities (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   user_id BIGINT UNSIGNED NULL,
   lead_id BIGINT UNSIGNED NULL,
@@ -310,9 +309,6 @@ CREATE TABLE activities (
   KEY idx_activities_account (account_id),
   KEY idx_activities_contact (contact_id),
   KEY idx_activities_deal (deal_id),
-  CONSTRAINT chk_activities_one_parent CHECK (
-    (lead_id IS NOT NULL) + (account_id IS NOT NULL) + (contact_id IS NOT NULL) + (deal_id IS NOT NULL) <= 1
-  ),
   CONSTRAINT fk_activities_user FOREIGN KEY (user_id) REFERENCES users(id)
     ON UPDATE CASCADE ON DELETE SET NULL,
   CONSTRAINT fk_activities_lead FOREIGN KEY (lead_id) REFERENCES leads(id)
@@ -325,7 +321,7 @@ CREATE TABLE activities (
     ON UPDATE CASCADE ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
-CREATE TABLE notifications (
+CREATE TABLE IF NOT EXISTS notifications (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   user_id BIGINT UNSIGNED NOT NULL,
   title VARCHAR(180) NOT NULL,
@@ -339,7 +335,7 @@ CREATE TABLE notifications (
     ON UPDATE CASCADE ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
-CREATE TABLE audit_logs (
+CREATE TABLE IF NOT EXISTS audit_logs (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   user_id BIGINT UNSIGNED NULL,
   action VARCHAR(100) NOT NULL,
@@ -362,4 +358,30 @@ INSERT INTO roles (name, description) VALUES
   ('Admin', 'Full system administration'),
   ('Manager', 'Team and CRM management'),
   ('Sale', 'Sales user')
-ON DUPLICATE KEY UPDATE description = VALUES(description);
+AS incoming_role
+ON DUPLICATE KEY UPDATE description = incoming_role.description;
+
+-- Auth support tables used by the existing forgot-password and dev-mailbox APIs.
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  user_id BIGINT UNSIGNED NOT NULL,
+  token_hash CHAR(64) CHARACTER SET ascii COLLATE ascii_bin NOT NULL,
+  expires_at DATETIME NOT NULL,
+  used_at DATETIME NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  CONSTRAINT uq_password_reset_tokens_hash UNIQUE (token_hash),
+  KEY idx_password_reset_tokens_user (user_id),
+  CONSTRAINT fk_password_reset_tokens_user FOREIGN KEY (user_id) REFERENCES users(id)
+    ON UPDATE CASCADE ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+CREATE TABLE IF NOT EXISTS dev_mailbox (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  recipient VARCHAR(254) NOT NULL,
+  subject VARCHAR(255) NOT NULL,
+  reset_url VARCHAR(1000) NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_dev_mailbox_created (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;

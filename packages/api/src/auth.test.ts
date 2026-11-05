@@ -3,25 +3,19 @@ import { after, before, test } from 'node:test';
 import request from 'supertest';
 import bcrypt from 'bcryptjs';
 import { createApp } from './app.js';
-import { db } from './db.js';
+import { db, execute, query } from './db.js';
 import { revokeUserRefreshTokens } from './auth.js';
 
 const app = createApp();
 
-before(() => {
-  db.prepare('DELETE FROM users').run();
-  db.prepare(`
-    INSERT INTO users (name, email, password_hash, role)
-    VALUES (?, ?, ?, ?)
-  `).run('Demo Admin', 'admin@test.local', bcrypt.hashSync('Password123!', 10), 'Admin');
-  db.prepare(`
-    INSERT INTO users (name, email, password_hash, role)
-    VALUES (?, ?, ?, ?)
-  `).run('Demo Sale', 'sale@test.local', bcrypt.hashSync('Password123!', 10), 'Sale');
+before(async () => {
+  await execute('DELETE FROM users');
+  await execute('INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, ?)', ['Demo Admin', 'admin@test.local', bcrypt.hashSync('Password123!', 10), 'Admin']);
+  await execute('INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, ?)', ['Demo Sale', 'sale@test.local', bcrypt.hashSync('Password123!', 10), 'Sale']);
 });
 
-after(() => {
-  db.close();
+after(async () => {
+  await db.end();
 });
 
 test('login sets HttpOnly cookies and RBAC denies non-admin users', async () => {
@@ -48,11 +42,10 @@ test('refresh rotates the cookie and logout revokes the current refresh token', 
 });
 
 test('forgot/reset password uses a one-time token and invalidates refresh sessions', async () => {
-  const user = db.prepare('SELECT id FROM users WHERE email = ?').get('admin@test.local') as { id: number };
-  revokeUserRefreshTokens(user.id);
+  const [user] = await query<(import('mysql2/promise').RowDataPacket & { id: number })[]>('SELECT id FROM users WHERE email = ?', ['admin@test.local']);
+  await revokeUserRefreshTokens(user.id);
   await request(app).post('/api/auth/forgot-password').send({ email: 'admin@test.local' }).expect(200);
-  const message = db.prepare('SELECT reset_url FROM dev_mailbox ORDER BY id DESC LIMIT 1')
-    .get() as { reset_url: string };
+  const [message] = await query<(import('mysql2/promise').RowDataPacket & { reset_url: string })[]>('SELECT reset_url FROM dev_mailbox ORDER BY id DESC LIMIT 1');
   const token = new URL(message.reset_url).searchParams.get('token');
   assert.ok(token);
   await request(app).post('/api/auth/reset-password')
