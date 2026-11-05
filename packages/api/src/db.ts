@@ -46,4 +46,4 @@ db.exec(`
     reset_url TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
-`);
+`);1
