@@ -89,7 +89,6 @@ export function Customers() {
   const [leadForm, setLeadForm] = useState<LeadForm>(emptyLead);
   const [convertingLead, setConvertingLead] = useState<CustomerItem | null>(null);
   const [accountName, setAccountName] = useState('');
-  const [createContact, setCreateContact] = useState(true);
   const pageSize = 10;
   const navigate = useNavigate();
   const requestId = useRef(0);
@@ -170,9 +169,8 @@ export function Customers() {
     if (!convertingLead) return;
     setError('');
     try {
-      const { data } = await api.post<{ accountId: number }>(`/customers/leads/${convertingLead.id}/convert`, {
+      const { data } = await api.post<{ accountId: number }>(`/leads/${convertingLead.id}/convert`, {
         accountName: accountName.trim() || undefined,
-        createContact,
       });
       setConvertingLead(null);
       navigate(`/customers/accounts/${data.accountId}`);
@@ -213,7 +211,7 @@ export function Customers() {
                 <td><div className="user-cell"><div className="avatar">{item.name?.slice(0, 1).toUpperCase()}</div><div><strong>{item.name}</strong><span>{item.source || 'Chưa rõ nguồn'}</span></div></div></td>
                 <td>{item.company || '—'}</td><td><div className="contact-info"><span>{item.email || '—'}</span><span>{item.phone || '—'}</span></div></td>
                 <td><span className={`status-pill status-${(item.status ?? 'NEW').toLowerCase()}`}>{item.status}</span></td>
-                <td><div className="row-actions">{item.status === 'CONVERTED' ? <Link className="text-button" to={`/customers/accounts/${item.accountId}`}>Xem Account</Link> : <><button className="text-button" onClick={() => openEditLead(item)}>Sửa</button><button className="text-button" onClick={() => { setConvertingLead(item); setAccountName(item.company || item.name || ''); setError(''); }}>Chuyển đổi</button></>}</div></td>
+                <td><div className="row-actions">{item.status === 'CONVERTED' ? <Link className="text-button" to={`/customers/accounts/${item.accountId}`}>Xem Account</Link> : <><button className="text-button" onClick={() => openEditLead(item)}>Sửa</button>{item.status === 'QUALIFIED' && <button className="text-button" onClick={() => { setConvertingLead(item); setAccountName(item.company || item.name || ''); setError(''); }}>Chuyển đổi</button>}</>}</div></td>
               </tr>
             ) : view === 'accounts' ? (
               <tr key={item.id}>
@@ -259,7 +257,6 @@ export function Customers() {
           <p className="muted">Chuyển <strong>{convertingLead.name}</strong> thành Account và tạo Contact liên quan.</p>
           <form className="customer-form single-column" onSubmit={convertLead}>
             <label>Tên Account<input required minLength={2} maxLength={160} value={accountName} onChange={(event) => setAccountName(event.target.value)} /></label>
-            <label className="checkbox-field"><input type="checkbox" checked={createContact} onChange={(event) => setCreateContact(event.target.checked)} /> Tạo Contact từ thông tin Lead</label>
             {error && <div className="alert error wide-field">{error}</div>}
             <div className="form-actions wide-field"><button type="button" className="secondary-button" onClick={() => setConvertingLead(null)}>Hủy</button><button type="submit" className="primary-button compact">Chuyển đổi</button></div>
           </form>

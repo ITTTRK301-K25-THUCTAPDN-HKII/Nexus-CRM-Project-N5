@@ -1,4 +1,4 @@
-import { Router } from 'express';
+import { Router, type Response } from 'express';
 import { ipKeyGenerator, rateLimit } from 'express-rate-limit';
 import { createHash, randomBytes } from 'node:crypto';
 import { z } from 'zod';
@@ -34,7 +34,33 @@ const leadSchema = z.object({
 });
 const convertLeadSchema = z.object({
   accountName: z.string().trim().min(2).max(160).optional(),
-  createContact: z.boolean().default(true),
+}).default({});
+const nullableText = (max: number) => z.union([z.string().trim().max(max), z.null()]).optional()
+  .transform((value) => value === undefined || value === null ? value : value || null);
+const accountCreateSchema = z.object({
+  name: z.string().trim().min(2).max(160),
+  industry: nullableText(100),
+  website: z.union([z.string().trim().url().max(255), z.literal(''), z.null()]).optional()
+    .transform((value) => value === undefined || value === null ? value : value || null),
+  phone: nullableText(40),
+  email: z.union([z.string().trim().email().max(254), z.literal(''), z.null()]).optional()
+    .transform((value) => value === undefined || value === null ? value : value.toLowerCase() || null),
+  billingAddress: nullableText(5000),
+});
+const accountUpdateSchema = accountCreateSchema.partial().refine((value) => Object.keys(value).length > 0, {
+  message: 'Cần cung cấp ít nhất một trường để cập nhật.',
+});
+const contactCreateSchema = z.object({
+  accountId: z.coerce.number().int().positive(),
+  firstName: z.string().trim().min(1).max(80),
+  lastName: z.string().trim().max(80).default(''),
+  email: z.union([z.string().trim().email().max(254), z.literal(''), z.null()]).optional()
+    .transform((value) => value === undefined || value === null ? value : value.toLowerCase() || null),
+  phone: nullableText(40),
+  jobTitle: nullableText(100),
+});
+const contactUpdateSchema = contactCreateSchema.partial().refine((value) => Object.keys(value).length > 0, {
+  message: 'Cần cung cấp ít nhất một trường để cập nhật.',
 });
 const tokenHash = (token: string) => createHash('sha256').update(token).digest('hex');
 const validationError = (error: z.ZodError) => ({ message: 'Dữ liệu không hợp lệ.', errors: error.issues.map((issue) => ({ field: issue.path.join('.'), message: issue.message })) });
@@ -85,10 +111,18 @@ async function findLeadDuplicate(email: string, phone: string, excludedId?: numb
 async function canAccessCustomer(user: NonNullable<AuthRequest['user']>, entity: 'leads' | 'accounts' | 'contacts', id: number): Promise<boolean> {
   if ((user.role === 'Admin' || user.role === 'Manager') && entity !== 'leads') return true;
   const activeLeadClause = entity === 'leads' ? ' AND deleted_at IS NULL' : '';
-  const ownershipClause = user.role === 'Admin' || user.role === 'Manager' ? '' : ' AND owner_user_id = ?';
-  const values = ownershipClause ? [id, user.id] : [id];
+  const isContact = entity === 'contacts';
+  const table = isContact ? 'contacts c INNER JOIN accounts a ON a.id = c.account_id' : entity;
+  const idColumn = isContact ? 'c.id' : 'id';
+  const ownerColumn = isContact ? 'c.owner_user_id' : 'owner_user_id';
+  const ownershipClause = user.role === 'Admin' || user.role === 'Manager'
+    ? ''
+    : ` AND ${ownerColumn} = ?${isContact ? ' AND a.owner_user_id = ?' : ''}`;
+  const values = ownershipClause
+    ? isContact ? [id, user.id, user.id] : [id, user.id]
+    : [id];
   const rows = await query<(RowDataPacket & { id: number })[]>(
-    `SELECT id FROM ${entity} WHERE id = ?${ownershipClause}${activeLeadClause} LIMIT 1`,
+    `SELECT ${idColumn} AS id FROM ${table} WHERE ${idColumn} = ?${ownershipClause}${activeLeadClause} LIMIT 1`,
     values,
   );
   return rows.length > 0;
@@ -266,6 +300,221 @@ router.get('/customers/leads', authenticate, async (req, res) => {
   res.json({ items: leads, page, pageSize, total: countRows[0]?.total ?? 0 });
 });
 
+router.get('/accounts', authenticate, async (req, res) => {
+  const { page, pageSize, offset, search } = pageOptions(req as AuthRequest);
+  const ownership = customerOwnership((req as AuthRequest).user);
+  const filters = [ownership.clause];
+  const values: Array<string | number> = [...ownership.values];
+  if (search) {
+    filters.push('(name LIKE ? OR industry LIKE ? OR email LIKE ? OR phone LIKE ?)');
+    const term = `%${search}%`;
+    values.push(term, term, term, term);
+  }
+  const where = filters.filter(Boolean).length ? `WHERE ${filters.filter(Boolean).join(' AND ')}` : '';
+  const [accounts, countRows] = await Promise.all([
+    query<UserRow[]>(`SELECT id, name, industry, website, phone, email, billing_address AS billingAddress, owner_user_id AS ownerUserId, created_at AS createdAt, updated_at AS updatedAt FROM accounts ${where} ORDER BY updated_at DESC, id DESC LIMIT ? OFFSET ?`, [...values, pageSize, offset]),
+    query<(RowDataPacket & { total: number })[]>(`SELECT COUNT(*) AS total FROM accounts ${where}`, values),
+  ]);
+  res.json({ items: accounts, page, pageSize, total: countRows[0]?.total ?? 0 });
+});
+
+router.post('/accounts', authenticate, async (req, res) => {
+  const parsed = accountCreateSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json(validationError(parsed.error)); return; }
+  const user = (req as AuthRequest).user!;
+  const { name, industry, website, phone, email, billingAddress } = parsed.data;
+  const result = await execute(
+    'INSERT INTO accounts (owner_user_id, name, industry, website, phone, email, billing_address) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    [user.id, name, industry ?? null, website ?? null, phone ?? null, email ?? null, billingAddress ?? null],
+  );
+  const [account] = await query<UserRow[]>(
+    'SELECT id, name, industry, website, phone, email, billing_address AS billingAddress, owner_user_id AS ownerUserId, created_at AS createdAt, updated_at AS updatedAt FROM accounts WHERE id = ?',
+    [Number(result.insertId)],
+  );
+  res.status(201).json({ account });
+});
+
+router.get('/accounts/:id', authenticate, async (req, res) => {
+  const id = z.coerce.number().int().positive().safeParse(req.params.id);
+  if (!id.success) { res.status(400).json({ message: 'ID Account không hợp lệ.' }); return; }
+  const user = (req as AuthRequest).user!;
+  const ownership = customerOwnership(user);
+  const rows = await query<UserRow[]>(
+    `SELECT id, name, industry, website, phone, email, billing_address AS billingAddress, owner_user_id AS ownerUserId, created_at AS createdAt, updated_at AS updatedAt FROM accounts WHERE id = ?${ownership.clause ? ` AND ${ownership.clause}` : ''}`,
+    [id.data, ...ownership.values],
+  );
+  if (!rows[0]) { res.status(404).json({ message: 'Không tìm thấy Account.' }); return; }
+  res.json({ account: rows[0] });
+});
+
+const updateAccount = async (req: AuthRequest, res: Response) => {
+  const id = z.coerce.number().int().positive().safeParse(req.params.id);
+  const parsed = accountUpdateSchema.safeParse(req.body);
+  if (!id.success || !parsed.success) {
+    res.status(400).json({ message: 'Dữ liệu Account không hợp lệ.', errors: parsed.success ? [] : parsed.error.issues });
+    return;
+  }
+  const user = req.user!;
+  if (!(await canAccessCustomer(user, 'accounts', id.data))) {
+    res.status(404).json({ message: 'Không tìm thấy Account.' });
+    return;
+  }
+  const columns: Record<string, string> = {
+    name: 'name', industry: 'industry', website: 'website', phone: 'phone', email: 'email', billingAddress: 'billing_address',
+  };
+  const updates = Object.entries(parsed.data).filter(([field, value]) => columns[field] && value !== undefined);
+  await execute(
+    `UPDATE accounts SET ${updates.map(([field]) => `${columns[field]} = ?`).join(', ')} WHERE id = ?`,
+    [...updates.map(([, value]) => value), id.data],
+  );
+  const [account] = await query<UserRow[]>(
+    'SELECT id, name, industry, website, phone, email, billing_address AS billingAddress, owner_user_id AS ownerUserId, created_at AS createdAt, updated_at AS updatedAt FROM accounts WHERE id = ?',
+    [id.data],
+  );
+  res.json({ account });
+};
+router.put('/accounts/:id', authenticate, updateAccount);
+router.patch('/accounts/:id', authenticate, updateAccount);
+
+router.delete('/accounts/:id', authenticate, async (req, res) => {
+  const id = z.coerce.number().int().positive().safeParse(req.params.id);
+  if (!id.success) { res.status(400).json({ message: 'ID Account không hợp lệ.' }); return; }
+  const user = (req as AuthRequest).user!;
+  if (!(await canAccessCustomer(user, 'accounts', id.data))) {
+    res.status(404).json({ message: 'Không tìm thấy Account.' });
+    return;
+  }
+  try {
+    await execute('DELETE FROM accounts WHERE id = ?', [id.data]);
+  } catch (error) {
+    if ((error as { code?: string }).code === 'ER_ROW_IS_REFERENCED_2') {
+      res.status(409).json({ message: 'Không thể xóa Account đang được sử dụng bởi dữ liệu khác.' });
+      return;
+    }
+    throw error;
+  }
+  res.status(204).end();
+});
+
+router.get('/contacts', authenticate, async (req, res) => {
+  const { page, pageSize, offset, search } = pageOptions(req as AuthRequest);
+  const user = (req as AuthRequest).user!;
+  const filters: string[] = [];
+  const values: Array<string | number> = [];
+  const accountId = req.query.accountId === undefined
+    ? undefined
+    : z.coerce.number().int().positive().safeParse(req.query.accountId);
+  if (accountId && !accountId.success) { res.status(400).json({ message: 'ID Account không hợp lệ.' }); return; }
+  if (accountId?.success) {
+    filters.push('c.account_id = ?');
+    values.push(accountId.data);
+  }
+  if (user.role === 'Sale') {
+    filters.push('c.owner_user_id = ?', 'a.owner_user_id = ?');
+    values.push(user.id, user.id);
+  }
+  if (search) {
+    filters.push('(c.first_name LIKE ? OR c.last_name LIKE ? OR c.email LIKE ? OR c.phone LIKE ? OR a.name LIKE ?)');
+    const term = `%${search}%`;
+    values.push(term, term, term, term, term);
+  }
+  const where = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+  const [contacts, countRows] = await Promise.all([
+    query<RowDataPacket[]>(`SELECT c.id, c.account_id AS accountId, a.name AS accountName, c.first_name AS firstName, c.last_name AS lastName, c.email, c.phone, c.job_title AS jobTitle, c.owner_user_id AS ownerUserId, c.created_at AS createdAt, c.updated_at AS updatedAt FROM contacts c INNER JOIN accounts a ON a.id = c.account_id ${where} ORDER BY c.last_name, c.first_name, c.id LIMIT ? OFFSET ?`, [...values, pageSize, offset]),
+    query<(RowDataPacket & { total: number })[]>(`SELECT COUNT(*) AS total FROM contacts c INNER JOIN accounts a ON a.id = c.account_id ${where}`, values),
+  ]);
+  res.json({ items: contacts, page, pageSize, total: countRows[0]?.total ?? 0 });
+});
+
+router.post('/contacts', authenticate, async (req, res) => {
+  const parsed = contactCreateSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json(validationError(parsed.error)); return; }
+  const user = (req as AuthRequest).user!;
+  const [accounts] = await query<(RowDataPacket & { id: number; ownerUserId: number })[]>(
+    `SELECT id, owner_user_id AS ownerUserId FROM accounts WHERE id = ?${user.role === 'Sale' ? ' AND owner_user_id = ?' : ''}`,
+    user.role === 'Sale' ? [parsed.data.accountId, user.id] : [parsed.data.accountId],
+  );
+  const account = accounts[0];
+  if (!account) { res.status(404).json({ message: 'Không tìm thấy Account được liên kết.' }); return; }
+  const { accountId, firstName, lastName, email, phone, jobTitle } = parsed.data;
+  const result = await execute(
+    'INSERT INTO contacts (account_id, owner_user_id, first_name, last_name, email, phone, job_title) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    [accountId, account.ownerUserId, firstName, lastName, email ?? null, phone ?? null, jobTitle ?? null],
+  );
+  const [contact] = await query<RowDataPacket[]>(
+    'SELECT c.id, c.account_id AS accountId, a.name AS accountName, c.first_name AS firstName, c.last_name AS lastName, c.email, c.phone, c.job_title AS jobTitle, c.owner_user_id AS ownerUserId, c.created_at AS createdAt, c.updated_at AS updatedAt FROM contacts c INNER JOIN accounts a ON a.id = c.account_id WHERE c.id = ?',
+    [Number(result.insertId)],
+  );
+  res.status(201).json({ contact });
+});
+
+router.get('/contacts/:id', authenticate, async (req, res) => {
+  const id = z.coerce.number().int().positive().safeParse(req.params.id);
+  if (!id.success) { res.status(400).json({ message: 'ID Contact không hợp lệ.' }); return; }
+  const user = (req as AuthRequest).user!;
+  const ownership = user.role === 'Sale' ? ' AND c.owner_user_id = ? AND a.owner_user_id = ?' : '';
+  const values = user.role === 'Sale' ? [id.data, user.id, user.id] : [id.data];
+  const rows = await query<RowDataPacket[]>(
+    `SELECT c.id, c.account_id AS accountId, a.name AS accountName, c.first_name AS firstName, c.last_name AS lastName, c.email, c.phone, c.job_title AS jobTitle, c.owner_user_id AS ownerUserId, c.created_at AS createdAt, c.updated_at AS updatedAt FROM contacts c INNER JOIN accounts a ON a.id = c.account_id WHERE c.id = ?${ownership}`,
+    values,
+  );
+  if (!rows[0]) { res.status(404).json({ message: 'Không tìm thấy Contact.' }); return; }
+  res.json({ contact: rows[0] });
+});
+
+const updateContact = async (req: AuthRequest, res: Response) => {
+  const id = z.coerce.number().int().positive().safeParse(req.params.id);
+  const parsed = contactUpdateSchema.safeParse(req.body);
+  if (!id.success || !parsed.success) {
+    res.status(400).json({ message: 'Dữ liệu Contact không hợp lệ.', errors: parsed.success ? [] : parsed.error.issues });
+    return;
+  }
+  const user = req.user!;
+  if (!(await canAccessCustomer(user, 'contacts', id.data))) {
+    res.status(404).json({ message: 'Không tìm thấy Contact.' });
+    return;
+  }
+  let accountOwnerId: number | undefined;
+  if (parsed.data.accountId !== undefined) {
+    const [accounts] = await query<(RowDataPacket & { id: number; ownerUserId: number })[]>(
+      `SELECT id, owner_user_id AS ownerUserId FROM accounts WHERE id = ?${user.role === 'Sale' ? ' AND owner_user_id = ?' : ''}`,
+      user.role === 'Sale' ? [parsed.data.accountId, user.id] : [parsed.data.accountId],
+    );
+    if (!accounts[0]) { res.status(404).json({ message: 'Không tìm thấy Account được liên kết.' }); return; }
+    accountOwnerId = accounts[0].ownerUserId;
+  }
+  const columns: Record<string, string> = {
+    accountId: 'account_id', firstName: 'first_name', lastName: 'last_name', email: 'email', phone: 'phone', jobTitle: 'job_title',
+  };
+  const updates = Object.entries(parsed.data).filter(([field, value]) => columns[field] && value !== undefined);
+  const assignments = updates.map(([field]) => `${columns[field]} = ?`);
+  const values = updates.map(([, value]) => value);
+  if (accountOwnerId !== undefined) {
+    assignments.push('owner_user_id = ?');
+    values.push(accountOwnerId);
+  }
+  await execute(`UPDATE contacts SET ${assignments.join(', ')} WHERE id = ?`, [...values, id.data]);
+  const [contact] = await query<RowDataPacket[]>(
+    'SELECT c.id, c.account_id AS accountId, a.name AS accountName, c.first_name AS firstName, c.last_name AS lastName, c.email, c.phone, c.job_title AS jobTitle, c.owner_user_id AS ownerUserId, c.created_at AS createdAt, c.updated_at AS updatedAt FROM contacts c INNER JOIN accounts a ON a.id = c.account_id WHERE c.id = ?',
+    [id.data],
+  );
+  res.json({ contact });
+};
+router.put('/contacts/:id', authenticate, updateContact);
+router.patch('/contacts/:id', authenticate, updateContact);
+
+router.delete('/contacts/:id', authenticate, async (req, res) => {
+  const id = z.coerce.number().int().positive().safeParse(req.params.id);
+  if (!id.success) { res.status(400).json({ message: 'ID Contact không hợp lệ.' }); return; }
+  const user = (req as AuthRequest).user!;
+  if (!(await canAccessCustomer(user, 'contacts', id.data))) {
+    res.status(404).json({ message: 'Không tìm thấy Contact.' });
+    return;
+  }
+  await execute('DELETE FROM contacts WHERE id = ?', [id.data]);
+  res.status(204).end();
+});
+
 router.get('/customers/accounts', authenticate, async (req, res) => {
   const { page, pageSize, offset, search } = pageOptions(req as AuthRequest);
   const ownership = customerOwnership((req as AuthRequest).user);
@@ -369,7 +618,7 @@ router.patch('/customers/leads/:id', authenticate, async (req, res) => {
   res.json({ item: rows[0] });
 });
 
-router.post('/customers/leads/:id/convert', authenticate, async (req, res) => {
+router.post(['/leads/:id/convert', '/customers/leads/:id/convert'], authenticate, async (req, res) => {
   const id = z.coerce.number().int().positive().safeParse(req.params.id);
   const parsed = convertLeadSchema.safeParse(req.body);
   if (!id.success || !parsed.success) {
@@ -377,59 +626,57 @@ router.post('/customers/leads/:id/convert', authenticate, async (req, res) => {
     return;
   }
   const user = (req as AuthRequest).user!;
-  if (!(await canAccessCustomer(user, 'leads', id.data))) {
-    res.status(404).json({ message: 'Không tìm thấy khách hàng tiềm năng.' });
-    return;
-  }
-  const rows = await query<(RowDataPacket & { id: number; name: string; company: string | null; email: string | null; phone: string | null; status: string })[]>(
-    'SELECT id, name, company, email, phone, status FROM leads WHERE id = ?',
-    [id.data],
-  );
-  const lead = rows[0];
-  if (!lead) {
-    res.status(404).json({ message: 'Không tìm thấy khách hàng tiềm năng.' });
-    return;
-  }
-  if (lead.status === 'CONVERTED') {
-    res.status(409).json({ message: 'Khách hàng tiềm năng đã được chuyển đổi.' });
-    return;
-  }
-  const accountName = parsed.data.accountName || lead.company || lead.name;
-  let accountId: number;
-  try {
-    accountId = await inTransaction(async (connection) => {
+  const result = await inTransaction(async (connection) => {
+    const [leadRows] = await connection.execute<(RowDataPacket & {
+      id: number;
+      ownerUserId: number;
+      name: string;
+      company: string | null;
+      email: string | null;
+      phone: string | null;
+      status: string;
+      deletedAt: Date | null;
+    })[]>(
+      'SELECT id, owner_user_id AS ownerUserId, name, company, email, phone, status, deleted_at AS deletedAt FROM leads WHERE id = ? FOR UPDATE',
+      [id.data],
+    );
+    const lead = leadRows[0];
+    if (!lead || (user.role === 'Sale' && lead.ownerUserId !== user.id)) return { kind: 'not_found' as const };
+    if (lead.deletedAt || lead.status === 'CONVERTED') return { kind: 'already_converted' as const };
+    if (lead.status !== 'QUALIFIED') return { kind: 'not_qualified' as const };
+
+    const accountName = parsed.data.accountName || lead.company || lead.name;
     const [accountResult] = await connection.execute<ResultSetHeader>(
       'INSERT INTO accounts (owner_user_id, name, email, phone) VALUES (?, ?, ?, ?)',
-      [user.id, accountName, lead.email, lead.phone],
+      [lead.ownerUserId, accountName, lead.email, lead.phone],
     );
-    if (parsed.data.createContact && (lead.email || lead.phone)) {
-      const nameParts = lead.name.trim().split(/\s+/);
-      const firstName = nameParts.length > 1 ? nameParts.shift()! : lead.name.trim();
-      const lastName = nameParts.join(' ');
-      await connection.execute(
-        'INSERT INTO contacts (account_id, owner_user_id, first_name, last_name, email, phone) VALUES (?, ?, ?, ?, ?, ?)',
-        [accountResult.insertId, user.id, firstName.slice(0, 80), lastName.slice(0, 80), lead.email, lead.phone],
-      );
-    }
+    const nameParts = lead.name.trim().split(/\s+/);
+    const firstName = nameParts.length > 1 ? nameParts.shift()! : lead.name.trim();
+    const lastName = nameParts.join(' ');
+    const [contactResult] = await connection.execute<ResultSetHeader>(
+      'INSERT INTO contacts (account_id, owner_user_id, first_name, last_name, email, phone) VALUES (?, ?, ?, ?, ?, ?)',
+      [accountResult.insertId, lead.ownerUserId, firstName.slice(0, 80), lastName.slice(0, 80), lead.email, lead.phone],
+    );
     const [updateResult] = await connection.execute<ResultSetHeader>(
-      'UPDATE leads SET status = ?, converted_account_id = ? WHERE id = ? AND status <> ?',
-      ['CONVERTED', accountResult.insertId, id.data, 'CONVERTED'],
+      'UPDATE leads SET status = ?, converted_account_id = ?, deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND status = ? AND deleted_at IS NULL',
+      ['CONVERTED', accountResult.insertId, id.data, 'QUALIFIED'],
     );
-    if (updateResult.affectedRows !== 1) throw new Error('Lead was converted concurrently.');
+    if (updateResult.affectedRows !== 1) throw new Error('Qualified lead changed during conversion.');
     await connection.execute(
-      'INSERT INTO activities (user_id, lead_id, account_id, activity_type, subject, details) VALUES (?, ?, ?, ?, ?, ?)',
-      [user.id, id.data, accountResult.insertId, 'STATUS_CHANGE', 'Lead converted', `Lead converted to account ${accountName}`],
+      'INSERT INTO activities (user_id, lead_id, account_id, contact_id, activity_type, subject, details) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      [user.id, id.data, accountResult.insertId, contactResult.insertId, 'STATUS_CHANGE', 'Lead converted', `Lead converted to account ${accountName}`],
     );
-      return accountResult.insertId;
-    });
-  } catch (error) {
-    if (error instanceof Error && error.message === 'Lead was converted concurrently.') {
-      res.status(409).json({ message: 'Lead vừa được chuyển đổi ở một phiên khác.' });
-      return;
-    }
-    throw error;
-  }
-  res.status(201).json({ accountId, message: 'Đã chuyển đổi lead thành khách hàng.' });
+    return { kind: 'converted' as const, accountId: accountResult.insertId, contactId: contactResult.insertId };
+  });
+
+  if (result.kind === 'not_found') { res.status(404).json({ message: 'Không tìm thấy khách hàng tiềm năng.' }); return; }
+  if (result.kind === 'already_converted') { res.status(409).json({ message: 'Khách hàng tiềm năng đã được chuyển đổi.' }); return; }
+  if (result.kind === 'not_qualified') { res.status(409).json({ message: 'Chỉ có thể chuyển đổi Lead ở trạng thái QUALIFIED.' }); return; }
+  res.status(201).json({
+    accountId: result.accountId,
+    contactId: result.contactId,
+    message: 'Đã chuyển đổi lead thành khách hàng.',
+  });
 });
 
 router.get('/customers/accounts/:id', authenticate, async (req, res) => {
