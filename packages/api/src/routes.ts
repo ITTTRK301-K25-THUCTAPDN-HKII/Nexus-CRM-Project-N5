@@ -154,6 +154,48 @@ router.delete('/leads/:id', authenticate, async (req, res) => {
   if (!(await softDeleteLead(id.data))) { res.status(404).json({ message: 'Không tìm thấy Lead.' }); return; }
   res.status(204).end();
 });
+router.patch('/leads/:id/assign', authenticate, requireRoles('Admin', 'Manager'), async (req, res) => {
+  const id = z.coerce.number().int().positive().safeParse(req.params.id);
+  const body = z.object({ assigned_to: z.coerce.number().int().positive() }).safeParse(req.body);
+  if (!id.success || !body.success) {
+    res.status(400).json({ message: 'Dữ liệu phân bổ Lead không hợp lệ.', errors: body.success ? [] : body.error.issues });
+    return;
+  }
+
+  const actor = (req as AuthRequest).user!;
+  const result = await inTransaction(async (connection) => {
+    const [leadRows] = await connection.execute<(RowDataPacket & { id: number; name: string; ownerUserId: number })[]>(
+      'SELECT id, name, owner_user_id AS ownerUserId FROM leads WHERE id = ? AND deleted_at IS NULL FOR UPDATE',
+      [id.data],
+    );
+    const lead = leadRows[0];
+    if (!lead) return { kind: 'not_found' as const };
+
+    const [saleRows] = await connection.execute<(RowDataPacket & { id: number; name: string })[]>(
+      "SELECT id, name FROM users WHERE id = ? AND role = 'Sale' AND status = 'ACTIVE'",
+      [body.data.assigned_to],
+    );
+    const sale = saleRows[0];
+    if (!sale) return { kind: 'invalid_sale' as const };
+    if (lead.ownerUserId === sale.id) return { kind: 'unchanged' as const, lead, sale };
+
+    await connection.execute('UPDATE leads SET owner_user_id = ? WHERE id = ?', [sale.id, lead.id]);
+    await connection.execute(
+      'INSERT INTO activities (user_id, lead_id, activity_type, subject, details) VALUES (?, ?, ?, ?, ?)',
+      [actor.id, lead.id, 'OTHER', 'Lead assigned', `Lead reassigned from user ${lead.ownerUserId} to Sale ${sale.name} (ID ${sale.id}) by ${actor.name} (ID ${actor.id}).`],
+    );
+    return { kind: 'assigned' as const, lead, sale };
+  });
+
+  if (result.kind === 'not_found') { res.status(404).json({ message: 'Không tìm thấy Lead.' }); return; }
+  if (result.kind === 'invalid_sale') { res.status(400).json({ message: 'Chỉ có thể phân bổ Lead cho nhân viên Sale đang hoạt động.' }); return; }
+  res.json({
+    message: result.kind === 'unchanged' ? 'Lead đã được phân bổ cho nhân viên này.' : 'Đã phân bổ Lead cho nhân viên Sale.',
+    lead: { id: result.lead.id, name: result.lead.name, ownerUserId: result.sale.id },
+    assignedTo: { id: result.sale.id, name: result.sale.name },
+    changed: result.kind === 'assigned',
+  });
+});
 router.post('/auth/login', loginLimiter, loginController);
 router.post('/auth/refresh', async (req, res) => { const user = await consumeRefreshCookie(req as AuthRequest, res); if (!user) { res.status(401).json({ message: 'Refresh token không hợp lệ hoặc đã hết hạn.' }); return; } res.json({ user }); });
 router.post('/auth/logout', async (req, res) => { await revokeRefreshToken(req.cookies?.nexus_refresh as string | undefined); clearAuthCookies(res); res.status(204).end(); });
