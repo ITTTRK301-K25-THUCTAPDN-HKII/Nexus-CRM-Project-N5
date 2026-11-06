@@ -8,9 +8,9 @@ import { authenticate, clearAuthCookies, consumeRefreshCookie, getUserById, hash
 import { config } from './config.js';
 import type { AuthRequest, UserRole, UserStatus } from './types.js';
 import { loginController } from './controllers/auth.controller.js';
-import { createLeadForUser } from './services/lead.service.js';
-import { createLeadSchema, listLeadsQuerySchema } from './schemas/lead.schema.js';
-import { listLeads } from './repositories/lead.repository.js';
+import { createLeadForUser, updateLeadForUser } from './services/lead.service.js';
+import { createLeadSchema, listLeadsQuerySchema, updateLeadSchema } from './schemas/lead.schema.js';
+import { listLeads, softDeleteLead } from './repositories/lead.repository.js';
 
 const roles = ['Admin', 'Manager', 'Sale'] as const;
 const loginSchema = z.object({ email: z.string().email().max(254), password: z.string().min(1).max(128) });
@@ -57,6 +57,32 @@ router.post('/leads', authenticate, async (req, res) => {
     return;
   }
   res.status(201).json({ lead: result.lead });
+});
+router.put('/leads/:id', authenticate, async (req, res) => {
+  const id = z.coerce.number().int().positive().safeParse(req.params.id);
+  const parsed = updateLeadSchema.safeParse(req.body);
+  if (!id.success || !parsed.success) {
+    res.status(400).json(parsed.success ? { message: 'ID Lead không hợp lệ.' } : validationError(parsed.error));
+    return;
+  }
+
+  const result = await updateLeadForUser(id.data, parsed.data);
+  if (!result.ok) {
+    if (result.reason === 'duplicate') {
+      res.status(409).json({ message: 'Lead với email hoặc số điện thoại này đã tồn tại.', duplicate: result.duplicate });
+      return;
+    }
+    if (result.reason === 'not_found') { res.status(404).json({ message: 'Không tìm thấy Lead.' }); return; }
+    res.status(400).json({ message: 'Lead cần có ít nhất email hoặc số điện thoại.' });
+    return;
+  }
+  res.json({ lead: result.lead });
+});
+router.delete('/leads/:id', authenticate, async (req, res) => {
+  const id = z.coerce.number().int().positive().safeParse(req.params.id);
+  if (!id.success) { res.status(400).json({ message: 'ID Lead không hợp lệ.' }); return; }
+  if (!(await softDeleteLead(id.data))) { res.status(404).json({ message: 'Không tìm thấy Lead.' }); return; }
+  res.status(204).end();
 });
 router.post('/auth/login', loginLimiter, loginController);
 router.post('/auth/refresh', async (req, res) => { const user = await consumeRefreshCookie(req as AuthRequest, res); if (!user) { res.status(401).json({ message: 'Refresh token không hợp lệ hoặc đã hết hạn.' }); return; } res.json({ user }); });

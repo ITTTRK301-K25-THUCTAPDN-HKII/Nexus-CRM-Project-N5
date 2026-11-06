@@ -1,7 +1,7 @@
 import type { ResultSetHeader, RowDataPacket } from 'mysql2/promise';
 import { execute, query } from '../db.js';
 import type { Lead, LeadStatus } from '../types.js';
-import type { CreateLeadInput } from '../schemas/lead.schema.js';
+import type { CreateLeadInput, UpdateLeadInput } from '../schemas/lead.schema.js';
 
 interface LeadRow extends RowDataPacket {
   id: number;
@@ -31,13 +31,15 @@ function leadSelect(where = ''): string {
     created_at AS createdAt, updated_at AS updatedAt FROM leads ${where}`;
 }
 
-export async function findDuplicateLead(email: string | null, phone: string | null): Promise<Lead | undefined> {
+export async function findDuplicateLead(email: string | null, phone: string | null, excludeId?: number): Promise<Lead | undefined> {
   const conditions: string[] = [];
-  const values: string[] = [];
+  const values: (string | number)[] = [];
   if (email) { conditions.push('email = ?'); values.push(email); }
   if (phone) { conditions.push('phone = ?'); values.push(phone); }
   if (conditions.length === 0) return undefined;
-  const rows = await query<LeadRow[]>(`${leadSelect(`WHERE ${conditions.join(' OR ')}`)} LIMIT 1`, values);
+  const duplicateWhere = `WHERE (${conditions.join(' OR ')})${excludeId === undefined ? '' : ' AND id <> ?'}`;
+  if (excludeId !== undefined) values.push(excludeId);
+  const rows = await query<LeadRow[]>(`${leadSelect(duplicateWhere)} LIMIT 1`, values);
   return rows[0];
 }
 
@@ -52,7 +54,7 @@ export async function createLead(ownerUserId: number, input: CreateLeadInput): P
 }
 
 export async function listLeads(filters: LeadListFilters): Promise<{ leads: Lead[]; total: number }> {
-  const conditions: string[] = [];
+  const conditions: string[] = ['deleted_at IS NULL'];
   const values: (string | number)[] = [];
   if (filters.q) {
     conditions.push('(name LIKE ? OR phone LIKE ?)');
@@ -69,4 +71,26 @@ export async function listLeads(filters: LeadListFilters): Promise<{ leads: Lead
     query<(RowDataPacket & { total: number })[]>(`SELECT COUNT(*) AS total FROM leads ${where}`, values),
   ]);
   return { leads, total: Number(countRows[0]?.total ?? 0) };
+}
+
+export async function findActiveLead(id: number): Promise<Lead | undefined> {
+  const rows = await query<LeadRow[]>(`${leadSelect('WHERE id = ? AND deleted_at IS NULL')}`, [id]);
+  return rows[0];
+}
+
+export async function updateLead(id: number, input: UpdateLeadInput): Promise<Lead | undefined> {
+  const columns: Partial<Record<keyof UpdateLeadInput, string>> = {
+    name: 'name', company: 'company', email: 'email', phone: 'phone',
+    source: 'source', notes: 'notes', status: 'status',
+  };
+  const updates = Object.entries(input).filter(([key, value]) => value !== undefined && columns[key as keyof UpdateLeadInput]);
+  if (!updates.length) return findActiveLead(id);
+  const setClause = updates.map(([key]) => `${columns[key as keyof UpdateLeadInput]} = ?`).join(', ');
+  await execute(`UPDATE leads SET ${setClause} WHERE id = ? AND deleted_at IS NULL`, [...updates.map(([, value]) => value), id]);
+  return findActiveLead(id);
+}
+
+export async function softDeleteLead(id: number): Promise<boolean> {
+  const result = await execute('UPDATE leads SET deleted_at = CURRENT_TIMESTAMP WHERE id = ? AND deleted_at IS NULL', [id]);
+  return result.affectedRows === 1;
 }

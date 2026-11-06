@@ -23,4 +23,20 @@ export const listLeadsQuerySchema = z.object({
   assigned_to: z.coerce.number().int().positive().optional(),
 });
 
+const optionalNullableText = (max: number) => z.string().trim().max(max).optional().transform((value) => value === undefined ? undefined : value || null);
+
+export const updateLeadSchema = z.object({
+  name: z.string().trim().min(2).max(160).optional(),
+  company: optionalNullableText(160),
+  email: z.union([z.string().trim().email().max(254), z.literal(''), z.null()]).optional()
+    .transform((value) => value === undefined || value === null ? value : value.toLowerCase() || null),
+  phone: optionalNullableText(40),
+  source: optionalNullableText(80),
+  notes: optionalNullableText(5000),
+  status: z.enum(['NEW', 'CONTACTED', 'QUALIFIED', 'UNQUALIFIED', 'CONVERTED']).optional(),
+}).refine((lead) => Object.values(lead).some((value) => value !== undefined), {
+  message: 'Cần cung cấp ít nhất một trường để cập nhật.',
+});
+
 export type CreateLeadInput = z.infer<typeof createLeadSchema>;
+export type UpdateLeadInput = z.infer<typeof updateLeadSchema>;
