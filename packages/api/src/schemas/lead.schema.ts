@@ -14,4 +14,13 @@ export const createLeadSchema = z.object({
   path: ['email'],
 });
 
+export const listLeadsQuerySchema = z.object({
+  q: z.string().trim().min(1).max(160).optional(),
+  page: z.coerce.number().int().min(1).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+  status: z.enum(['NEW', 'CONTACTED', 'QUALIFIED', 'UNQUALIFIED']).optional(),
+  source: z.string().trim().min(1).max(80).optional(),
+  assigned_to: z.coerce.number().int().positive().optional(),
+});
+
 export type CreateLeadInput = z.infer<typeof createLeadSchema>;

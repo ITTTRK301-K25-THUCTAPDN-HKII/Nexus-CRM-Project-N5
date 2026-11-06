@@ -9,7 +9,8 @@ import { config } from './config.js';
 import type { AuthRequest, UserRole, UserStatus } from './types.js';
 import { loginController } from './controllers/auth.controller.js';
 import { createLeadForUser } from './services/lead.service.js';
-import { createLeadSchema } from './schemas/lead.schema.js';
+import { createLeadSchema, listLeadsQuerySchema } from './schemas/lead.schema.js';
+import { listLeads } from './repositories/lead.repository.js';
 
 const roles = ['Admin', 'Manager', 'Sale'] as const;
 const loginSchema = z.object({ email: z.string().email().max(254), password: z.string().min(1).max(128) });
@@ -30,6 +31,19 @@ export const resetLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 5, stan
 
 interface UserRow extends RowDataPacket { id: number; name: string; email: string; role: UserRole; status: UserStatus; password_hash?: string; createdAt?: Date; }
 const router = Router();
+router.get('/leads', authenticate, async (req, res) => {
+  const parsed = listLeadsQuerySchema.safeParse(req.query);
+  if (!parsed.success) { res.status(400).json(validationError(parsed.error)); return; }
+
+  const { q, page, limit, status, source, assigned_to: assignedTo } = parsed.data;
+  const { leads, total } = await listLeads({
+    q, status, source, assignedTo, limit, offset: (page - 1) * limit,
+  });
+  res.json({
+    leads,
+    pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+  });
+});
 router.post('/leads', authenticate, async (req, res) => {
   const parsed = createLeadSchema.safeParse(req.body);
   if (!parsed.success) { res.status(400).json(validationError(parsed.error)); return; }

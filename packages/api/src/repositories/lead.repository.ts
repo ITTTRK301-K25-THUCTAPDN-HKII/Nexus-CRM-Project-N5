@@ -17,6 +17,15 @@ interface LeadRow extends RowDataPacket {
   updatedAt: Date;
 }
 
+export interface LeadListFilters {
+  q?: string;
+  status?: Exclude<LeadStatus, 'CONVERTED'>;
+  source?: string;
+  assignedTo?: number;
+  limit: number;
+  offset: number;
+}
+
 function leadSelect(where = ''): string {
   return `SELECT id, owner_user_id AS ownerUserId, name, company, email, phone, source, status, notes,
     created_at AS createdAt, updated_at AS updatedAt FROM leads ${where}`;
@@ -40,4 +49,24 @@ export async function createLead(ownerUserId: number, input: CreateLeadInput): P
   );
   const rows = await query<LeadRow[]>(`${leadSelect('WHERE id = ?')}`, [Number(result.insertId)]);
   return rows[0]!;
+}
+
+export async function listLeads(filters: LeadListFilters): Promise<{ leads: Lead[]; total: number }> {
+  const conditions: string[] = [];
+  const values: (string | number)[] = [];
+  if (filters.q) {
+    conditions.push('(name LIKE ? OR phone LIKE ?)');
+    const prefix = `${filters.q}%`;
+    values.push(prefix, prefix);
+  }
+  if (filters.status) { conditions.push('status = ?'); values.push(filters.status); }
+  if (filters.source) { conditions.push('source = ?'); values.push(filters.source); }
+  if (filters.assignedTo !== undefined) { conditions.push('owner_user_id = ?'); values.push(filters.assignedTo); }
+
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  const [leads, countRows] = await Promise.all([
+    query<LeadRow[]>(`${leadSelect(where)} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`, [...values, filters.limit, filters.offset]),
+    query<(RowDataPacket & { total: number })[]>(`SELECT COUNT(*) AS total FROM leads ${where}`, values),
+  ]);
+  return { leads, total: Number(countRows[0]?.total ?? 0) };
 }
