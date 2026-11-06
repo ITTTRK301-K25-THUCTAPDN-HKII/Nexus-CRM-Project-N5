@@ -8,6 +8,8 @@ import { authenticate, clearAuthCookies, consumeRefreshCookie, getUserById, hash
 import { config } from './config.js';
 import type { AuthRequest, UserRole, UserStatus } from './types.js';
 import { loginController } from './controllers/auth.controller.js';
+import { createLeadForUser } from './services/lead.service.js';
+import { createLeadSchema } from './schemas/lead.schema.js';
 
 const roles = ['Admin', 'Manager', 'Sale'] as const;
 const loginSchema = z.object({ email: z.string().email().max(254), password: z.string().min(1).max(128) });
@@ -28,6 +30,20 @@ export const resetLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 5, stan
 
 interface UserRow extends RowDataPacket { id: number; name: string; email: string; role: UserRole; status: UserStatus; password_hash?: string; createdAt?: Date; }
 const router = Router();
+router.post('/leads', authenticate, async (req, res) => {
+  const parsed = createLeadSchema.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json(validationError(parsed.error)); return; }
+
+  const result = await createLeadForUser((req as AuthRequest).user!.id, parsed.data);
+  if (!result.ok) {
+    res.status(409).json({
+      message: 'Lead với email hoặc số điện thoại này đã tồn tại.',
+      duplicate: result.duplicate,
+    });
+    return;
+  }
+  res.status(201).json({ lead: result.lead });
+});
 router.post('/auth/login', loginLimiter, loginController);
 router.post('/auth/refresh', async (req, res) => { const user = await consumeRefreshCookie(req as AuthRequest, res); if (!user) { res.status(401).json({ message: 'Refresh token không hợp lệ hoặc đã hết hạn.' }); return; } res.json({ user }); });
 router.post('/auth/logout', async (req, res) => { await revokeRefreshToken(req.cookies?.nexus_refresh as string | undefined); clearAuthCookies(res); res.status(204).end(); });

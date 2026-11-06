@@ -80,9 +80,10 @@ CREATE TABLE IF NOT EXISTS leads (
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
+  UNIQUE KEY uq_leads_email (email),
+  UNIQUE KEY uq_leads_phone (phone),
   KEY idx_leads_owner (owner_user_id),
   KEY idx_leads_status (status),
-  KEY idx_leads_email (email),
   KEY idx_leads_converted_account (converted_account_id),
   CONSTRAINT fk_leads_owner FOREIGN KEY (owner_user_id) REFERENCES users(id)
     ON UPDATE CASCADE ON DELETE RESTRICT,
