@@ -84,6 +84,8 @@ CREATE TABLE IF NOT EXISTS leads (
   UNIQUE KEY uq_leads_phone (phone),
   KEY idx_leads_owner (owner_user_id),
   KEY idx_leads_status (status),
+  KEY idx_leads_name (name),
+  KEY idx_leads_source (source),
   KEY idx_leads_converted_account (converted_account_id),
   CONSTRAINT fk_leads_owner FOREIGN KEY (owner_user_id) REFERENCES users(id)
     ON UPDATE CASCADE ON DELETE RESTRICT,
