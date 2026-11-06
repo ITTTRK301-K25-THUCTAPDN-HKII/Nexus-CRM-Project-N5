@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { LogOut, Plus, Search, Shield, UserRound, Users } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { api, getErrorMessage } from '../api';
 import { useAuth, type User } from '../auth';
 
@@ -85,6 +85,7 @@ export function AdminUsers() {
         <div className="brand"><span className="brand-mark">N</span><span>NEXUS<span className="brand-light">CRM</span></span></div>
         <div className="nav-label">WORKSPACE</div>
         <a className="nav-item active" href="/admin/users"><Users size={18} /> Quản lý người dùng</a>
+        <Link className="nav-item" to="/customers"><Users size={18} /> Khách hàng</Link>
         <div className="sidebar-bottom">
           <div className="profile-chip"><div className="avatar">{user?.name.slice(0, 1).toUpperCase()}</div><div><strong>{user?.name}</strong><span>{user?.role}</span></div></div>
           <button className="logout-button" onClick={signOut}><LogOut size={17} /> Đăng xuất</button>

@@ -1,5 +1,5 @@
 import { LogOut, ShieldCheck } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth';
 
 export function Workspace() {
@@ -17,6 +17,7 @@ export function Workspace() {
         <span className="eyebrow">ĐĂNG NHẬP THÀNH CÔNG</span>
         <h1>Xin chào, {user?.name}</h1>
         <p className="muted">Vai trò: <strong>{user?.role}</strong>. Trang quản lý người dùng chỉ dành cho Admin.</p>
+        <Link className="primary-button full-width" to="/customers">Mở module khách hàng</Link>
         <button className="secondary-button full-width" onClick={signOut}><LogOut size={17} /> Đăng xuất</button>
       </section>
     </main>

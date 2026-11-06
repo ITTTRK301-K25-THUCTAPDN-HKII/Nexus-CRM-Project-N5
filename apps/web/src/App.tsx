@@ -6,6 +6,8 @@ import { ForgotPassword } from './pages/ForgotPassword';
 import { Login } from './pages/Login';
 import { ResetPassword } from './pages/ResetPassword';
 import { Workspace } from './pages/Workspace';
+import { Customers } from './pages/Customers';
+import { CustomerDetail } from './pages/CustomerDetail';
 
 function LoadingPage() {
   return <div className="loading-screen">Đang tải phiên đăng nhập...</div>;
@@ -33,6 +35,8 @@ export function App() {
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password" element={<ResetPassword />} />
       <Route path="/admin/users" element={<RequireAuth adminOnly><AdminUsers /></RequireAuth>} />
+      <Route path="/customers" element={<RequireAuth><Customers /></RequireAuth>} />
+      <Route path="/customers/accounts/:id" element={<RequireAuth><CustomerDetail /></RequireAuth>} />
       <Route path="/workspace" element={<RequireAuth><Workspace /></RequireAuth>} />
       <Route path="*" element={<HomeRedirect />} />
     </Routes>
