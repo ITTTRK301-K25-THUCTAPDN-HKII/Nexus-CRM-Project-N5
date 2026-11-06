@@ -147,6 +147,10 @@ export function Customers() {
   async function saveLead(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError('');
+    if (!leadForm.email.trim() && !leadForm.phone.trim()) {
+      setError('Vui lòng nhập email hoặc số điện thoại để tạo Lead.');
+      return;
+    }
     try {
       if (editingLead) {
         await api.patch(`/customers/leads/${editingLead.id}`, leadForm);
@@ -237,8 +241,8 @@ export function Customers() {
           <form className="customer-form" onSubmit={saveLead}>
             <label>Họ tên *<input required minLength={2} maxLength={160} value={leadForm.name} onChange={(event) => setLeadForm({ ...leadForm, name: event.target.value })} /></label>
             <label>Công ty<input maxLength={160} value={leadForm.company} onChange={(event) => setLeadForm({ ...leadForm, company: event.target.value })} /></label>
-            <label>Email<input type="email" maxLength={254} value={leadForm.email} onChange={(event) => setLeadForm({ ...leadForm, email: event.target.value })} /></label>
-            <label>Số điện thoại<input maxLength={40} value={leadForm.phone} onChange={(event) => setLeadForm({ ...leadForm, phone: event.target.value })} /></label>
+            <label>Email { !leadForm.phone.trim() && '*' }<input type="email" required={!leadForm.phone.trim()} maxLength={254} value={leadForm.email} onChange={(event) => setLeadForm({ ...leadForm, email: event.target.value })} /></label>
+            <label>Số điện thoại { !leadForm.email.trim() && '*' }<input required={!leadForm.email.trim()} maxLength={40} value={leadForm.phone} onChange={(event) => setLeadForm({ ...leadForm, phone: event.target.value })} /></label>
             <label>Nguồn Lead<input maxLength={80} placeholder="Website, giới thiệu..." value={leadForm.source} onChange={(event) => setLeadForm({ ...leadForm, source: event.target.value })} /></label>
             <label>Trạng thái<select value={leadForm.status} onChange={(event) => setLeadForm({ ...leadForm, status: event.target.value as LeadForm['status'] })}><option value="NEW">Mới</option><option value="CONTACTED">Đã liên hệ</option><option value="QUALIFIED">Tiềm năng</option><option value="UNQUALIFIED">Không phù hợp</option></select></label>
             <label className="wide-field">Ghi chú<textarea rows={3} maxLength={5000} value={leadForm.notes} onChange={(event) => setLeadForm({ ...leadForm, notes: event.target.value })} /></label>

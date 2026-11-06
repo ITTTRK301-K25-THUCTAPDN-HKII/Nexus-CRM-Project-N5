@@ -27,6 +27,9 @@ const leadSchema = z.object({
   source: z.string().trim().max(80).optional().default(''),
   status: z.enum(['NEW', 'CONTACTED', 'QUALIFIED', 'UNQUALIFIED']).optional().default('NEW'),
   notes: z.string().trim().max(5000).optional().default(''),
+}).refine((lead) => lead.email || lead.phone, {
+  message: 'Lead cần có ít nhất email hoặc số điện thoại.',
+  path: ['email'],
 });
 const convertLeadSchema = z.object({
   accountName: z.string().trim().min(2).max(160).optional(),
@@ -224,16 +227,27 @@ router.post('/customers/leads', authenticate, async (req, res) => {
   const parsed = leadSchema.safeParse(req.body);
   if (!parsed.success) { res.status(400).json(validationError(parsed.error)); return; }
   const lead = parsed.data;
-  if (await findLeadDuplicate(lead.email, lead.phone)) {
-    res.status(409).json({ code: 'DUPLICATE_LEAD', message: 'Đã có khách hàng tiềm năng trùng email hoặc số điện thoại.' });
+  const user = (req as AuthRequest).user!;
+  const result = await createLeadForUser(user.id, {
+    name: lead.name,
+    company: lead.company || null,
+    email: lead.email.toLowerCase() || null,
+    phone: lead.phone || null,
+    source: lead.source || null,
+    notes: lead.notes || null,
+  });
+  if (!result.ok) {
+    res.status(409).json({
+      code: 'DUPLICATE_LEAD',
+      message: 'Đã có khách hàng tiềm năng trùng email hoặc số điện thoại.',
+      duplicate: result.duplicate,
+    });
     return;
   }
-  const user = (req as AuthRequest).user!;
-  const result = await execute(
-    'INSERT INTO leads (owner_user_id, name, company, email, phone, source, status, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-    [user.id, lead.name, lead.company || null, lead.email.toLowerCase() || null, lead.phone || null, lead.source || null, lead.status, lead.notes || null],
-  );
-  const rows = await query<UserRow[]>('SELECT id, name, company, email, phone, source, status, notes, converted_account_id AS accountId, owner_user_id AS ownerUserId, created_at AS createdAt FROM leads WHERE id = ?', [result.insertId]);
+  if (lead.status !== 'NEW') {
+    await execute('UPDATE leads SET status = ? WHERE id = ?', [lead.status, result.lead.id]);
+  }
+  const rows = await query<UserRow[]>('SELECT id, name, company, email, phone, source, status, notes, converted_account_id AS accountId, owner_user_id AS ownerUserId, created_at AS createdAt FROM leads WHERE id = ?', [result.lead.id]);
   res.status(201).json({ item: rows[0] });
 });
 
@@ -254,10 +268,18 @@ router.patch('/customers/leads/:id', authenticate, async (req, res) => {
     res.status(409).json({ code: 'DUPLICATE_LEAD', message: 'Đã có khách hàng tiềm năng trùng email hoặc số điện thoại.' });
     return;
   }
-  await execute(
-    'UPDATE leads SET name = ?, company = ?, email = ?, phone = ?, source = ?, status = ?, notes = ? WHERE id = ?',
-    [lead.name, lead.company || null, lead.email.toLowerCase() || null, lead.phone || null, lead.source || null, lead.status, lead.notes || null, id.data],
-  );
+  try {
+    await execute(
+      'UPDATE leads SET name = ?, company = ?, email = ?, phone = ?, source = ?, status = ?, notes = ? WHERE id = ?',
+      [lead.name, lead.company || null, lead.email.toLowerCase() || null, lead.phone || null, lead.source || null, lead.status, lead.notes || null, id.data],
+    );
+  } catch (error) {
+    if ((error as { code?: string }).code === 'ER_DUP_ENTRY') {
+      res.status(409).json({ code: 'DUPLICATE_LEAD', message: 'Đã có khách hàng tiềm năng trùng email hoặc số điện thoại.' });
+      return;
+    }
+    throw error;
+  }
   const rows = await query<UserRow[]>('SELECT id, name, company, email, phone, source, status, notes, converted_account_id AS accountId, owner_user_id AS ownerUserId, created_at AS createdAt FROM leads WHERE id = ?', [id.data]);
   res.json({ item: rows[0] });
 });
