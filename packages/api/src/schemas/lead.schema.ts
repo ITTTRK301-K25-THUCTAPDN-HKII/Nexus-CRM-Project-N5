@@ -6,7 +6,7 @@ export const createLeadSchema = z.object({
   name: z.string().trim().min(2).max(160),
   company: nullableText(160),
   email: z.string().trim().email().max(254).optional().transform((value) => value?.toLowerCase() || null),
-  phone: nullableText(40),
+  phone: nullableText(40).transform((value) => value?.replace(/[\s().-]/g, '') || null),
   source: nullableText(80),
   notes: nullableText(5000),
 }).refine((lead) => lead.email || lead.phone, {
@@ -23,14 +23,15 @@ export const listLeadsQuerySchema = z.object({
   assigned_to: z.coerce.number().int().positive().optional(),
 });
 
-const optionalNullableText = (max: number) => z.string().trim().max(max).optional().transform((value) => value === undefined ? undefined : value || null);
+const optionalNullableText = (max: number) => z.union([z.string().trim().max(max), z.null()]).optional()
+  .transform((value) => value === undefined || value === null ? value : value || null);
 
 export const updateLeadSchema = z.object({
   name: z.string().trim().min(2).max(160).optional(),
   company: optionalNullableText(160),
   email: z.union([z.string().trim().email().max(254), z.literal(''), z.null()]).optional()
     .transform((value) => value === undefined || value === null ? value : value.toLowerCase() || null),
-  phone: optionalNullableText(40),
+  phone: optionalNullableText(40).transform((value) => value == null ? value : value.replace(/[\s().-]/g, '') || null),
   source: optionalNullableText(80),
   notes: optionalNullableText(5000),
   status: z.enum(['NEW', 'CONTACTED', 'QUALIFIED', 'UNQUALIFIED', 'CONVERTED']).optional(),

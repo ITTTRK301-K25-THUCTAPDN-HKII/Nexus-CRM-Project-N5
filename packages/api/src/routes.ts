@@ -83,10 +83,13 @@ async function findLeadDuplicate(email: string, phone: string, excludedId?: numb
 }
 
 async function canAccessCustomer(user: NonNullable<AuthRequest['user']>, entity: 'leads' | 'accounts' | 'contacts', id: number): Promise<boolean> {
-  if (user.role === 'Admin' || user.role === 'Manager') return true;
+  if ((user.role === 'Admin' || user.role === 'Manager') && entity !== 'leads') return true;
+  const activeLeadClause = entity === 'leads' ? ' AND deleted_at IS NULL' : '';
+  const ownershipClause = user.role === 'Admin' || user.role === 'Manager' ? '' : ' AND owner_user_id = ?';
+  const values = ownershipClause ? [id, user.id] : [id];
   const rows = await query<(RowDataPacket & { id: number })[]>(
-    `SELECT id FROM ${entity} WHERE id = ? AND owner_user_id = ? LIMIT 1`,
-    [id, user.id],
+    `SELECT id FROM ${entity} WHERE id = ?${ownershipClause}${activeLeadClause} LIMIT 1`,
+    values,
   );
   return rows.length > 0;
 }
@@ -243,7 +246,7 @@ router.delete('/dev/mailbox', async (_req, res) => { if (config.NODE_ENV !== 'de
 router.get('/customers/leads', authenticate, async (req, res) => {
   const { page, pageSize, offset, search } = pageOptions(req as AuthRequest);
   const ownership = customerOwnership((req as AuthRequest).user);
-  const filters = [ownership.clause].filter(Boolean);
+  const filters = ['deleted_at IS NULL', ownership.clause].filter(Boolean);
   const values: Array<string | number> = [...ownership.values];
   if (search) {
     filters.push('(name LIKE ? OR company LIKE ? OR email LIKE ? OR phone LIKE ?)');

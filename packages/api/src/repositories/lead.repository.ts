@@ -58,8 +58,8 @@ export async function listLeads(filters: LeadListFilters): Promise<{ leads: Lead
   const values: (string | number)[] = [];
   if (filters.q) {
     conditions.push('(name LIKE ? OR phone LIKE ?)');
-    const prefix = `${filters.q}%`;
-    values.push(prefix, prefix);
+    const keyword = `%${filters.q}%`;
+    values.push(keyword, keyword);
   }
   if (filters.status) { conditions.push('status = ?'); values.push(filters.status); }
   if (filters.source) { conditions.push('source = ?'); values.push(filters.source); }
