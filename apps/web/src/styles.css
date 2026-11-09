@@ -222,6 +222,20 @@ td { padding: 13px 17px; border-top: 1px solid #f0f2f6; color: #58667c; font-siz
 .related-main strong, .deal-item > strong { color: #43516a; font-size: 10px; }
 .related-main span, .related-main small { color: #8b97aa; font-size: 9px; }
 .deal-item { justify-content: space-between; }
+.deal-history-card { display: grid; gap: 8px; }
+.deal-history-summary { display: flex; align-items: center; gap: 10px; width: 100%; }
+.deal-amount { white-space: nowrap; color: #43516a; font-size: 10px; }
+.deal-history-toggle { justify-self: start; display: inline-flex; align-items: center; gap: 6px; border: 0; border-radius: 6px; padding: 5px 7px; background: #f2f4fb; color: #5368bc; font-size: 9px; font-weight: 700; }
+.deal-history-toggle:hover { background: #e9edff; }
+.deal-history-timeline { display: grid; gap: 0; padding: 10px 0 0 5px; }
+.deal-history-event { position: relative; display: flex; gap: 10px; padding: 0 0 15px; }
+.deal-history-event:not(:last-child)::before { position: absolute; top: 8px; bottom: 0; left: 3px; width: 1px; background: #e1e6f0; content: ''; }
+.deal-history-dot { z-index: 1; width: 8px; height: 8px; flex: 0 0 8px; margin-top: 3px; border: 2px solid #6c83df; border-radius: 50%; background: #fff; }
+.deal-history-event > div { display: grid; gap: 4px; }
+.deal-history-event strong { color: #45536b; font-size: 9px; line-height: 1.5; }
+.deal-history-event span { color: #929daf; font-size: 8px; }
+.deal-history-event p, .deal-history-empty, .deal-history-error { margin: 0; color: #75829a; font-size: 9px; line-height: 1.5; }
+.deal-history-error { color: #a13d42; }
 .empty-state { padding: 22px 15px; color: #929daf; font-size: 10px; text-align: center; }
 .timeline { padding: 13px 17px 5px; }
 .timeline-item { position: relative; display: flex; gap: 12px; padding-bottom: 17px; }

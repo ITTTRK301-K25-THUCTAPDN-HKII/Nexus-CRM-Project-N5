@@ -3,6 +3,7 @@ import { ArrowLeft, Building2, CalendarDays, ContactRound, Handshake, Mail, Phon
 import { Link, useParams } from 'react-router-dom';
 import { api, getErrorMessage } from '../api';
 import { CustomerSidebar } from './Customers';
+import { DealTimeline } from './DealTimeline';
 
 interface AccountDetail {
   id: number;
@@ -95,7 +96,7 @@ export function CustomerDetail() {
 
             <article className="table-card detail-section">
               <div className="detail-section-heading"><div className="icon-tile small-tile"><Handshake size={17} /></div><div><strong>Cơ hội kinh doanh</strong><span>{detail.deals.length} cơ hội gần đây</span></div></div>
-              {detail.deals.length ? <div className="related-list">{detail.deals.map((deal) => <div className="related-item deal-item" key={deal.id}><div className="related-main"><strong>{deal.name}</strong><span>{deal.stage} · {deal.probability}%</span></div><strong>{new Intl.NumberFormat('vi-VN', { style: 'currency', currency: deal.currency }).format(deal.amount)}</strong></div>)}</div> : <p className="empty-state">Chưa có cơ hội kinh doanh.</p>}
+              {detail.deals.length ? <div className="related-list">{detail.deals.map((deal) => <DealTimeline deal={deal} key={deal.id} />)}</div> : <p className="empty-state">Chưa có cơ hội kinh doanh.</p>}
             </article>
 
             <article className="table-card detail-section activity-section">

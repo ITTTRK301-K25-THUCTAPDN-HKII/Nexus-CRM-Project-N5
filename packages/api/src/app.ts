@@ -2,6 +2,7 @@ import cookieParser from 'cookie-parser';
 import express from 'express';
 import helmet from 'helmet';
 import { apiRouter } from './routes.js';
+import { dealRouter } from './deal.routes.js';
 
 export function createApp() {
   const app = express();
@@ -11,6 +12,7 @@ export function createApp() {
   app.use(cookieParser());
   app.get('/api/health', (_request, response) => response.json({ status: 'ok' }));
   app.use('/api', apiRouter);
+  app.use('/api', dealRouter);
   app.use((_request, response) => response.status(404).json({ message: 'Không tìm thấy tài nguyên.' }));
   app.use((error: unknown, _request: express.Request, response: express.Response, _next: express.NextFunction) => {
     console.error(error);
