@@ -330,23 +330,23 @@ def page_options():
 
 
 def ownership(user, column="owner_user_id"):
-    if user["role"] in ("Admin", "Manager"):
+    if user["role"] == "Admin":
         return "", []
     return f"{column} = %s", [user["id"]]
 
 
 def can_access_customer(user, entity, entity_id):
-    if user["role"] in ("Admin", "Manager") and entity != "leads":
+    if user["role"] == "Admin":
         return True
     if entity == "contacts":
-        extra = "" if user["role"] in ("Admin", "Manager") else " AND c.owner_user_id = %s AND a.owner_user_id = %s"
+        extra = "" if user["role"] == "Admin" else " AND c.owner_user_id = %s AND a.owner_user_id = %s"
         values = (entity_id,) if not extra else (entity_id, user["id"], user["id"])
         return bool(query(
             "SELECT c.id FROM contacts c INNER JOIN accounts a ON a.id=c.account_id "
             "WHERE c.id=%s" + extra + " LIMIT 1",
             values,
         ))
-    extra = "" if user["role"] in ("Admin", "Manager") else " AND owner_user_id=%s"
+    extra = "" if user["role"] == "Admin" else " AND owner_user_id=%s"
     values = (entity_id,) if not extra else (entity_id, user["id"])
     if entity == "leads":
         extra += " AND deleted_at IS NULL"
@@ -712,6 +712,10 @@ def leads_list():
     except ValueError:
         return json_error("Tham số truy vấn không hợp lệ.", 400)
     where, values = ["deleted_at IS NULL"], []
+    own, own_values = ownership(g.user)
+    if own:
+        where.append(own)
+        values.extend(own_values)
     search = request.args.get("q", "").strip()[:160]
     if search:
         where.append("(name LIKE %s OR phone LIKE %s)")
@@ -799,8 +803,9 @@ def leads_update(lead_id):
     except ValueError as error:
         return validation_error([("body", str(error))])
     existing_rows = query(
-        "SELECT id,email,phone FROM leads WHERE id=%s AND deleted_at IS NULL",
-        (parsed_id,),
+        "SELECT id,email,phone FROM leads WHERE id=%s AND deleted_at IS NULL"
+        + (" AND owner_user_id=%s" if g.user["role"] != "Admin" else ""),
+        (parsed_id, g.user["id"]) if g.user["role"] != "Admin" else (parsed_id,),
     )
     if not existing_rows:
         return json_error("Không tìm thấy Lead.", 404)
@@ -832,8 +837,9 @@ def leads_delete(lead_id):
     except ValueError as error:
         return json_error(str(error), 400)
     _, affected = execute(
-        "UPDATE leads SET deleted_at=NOW() WHERE id=%s AND deleted_at IS NULL",
-        (parsed_id,),
+        "UPDATE leads SET deleted_at=NOW() WHERE id=%s AND deleted_at IS NULL"
+        + (" AND owner_user_id=%s" if g.user["role"] != "Admin" else ""),
+        (parsed_id, g.user["id"]) if g.user["role"] != "Admin" else (parsed_id,),
     )
     return ("", 204) if affected else json_error("Không tìm thấy Lead.", 404)
 
@@ -851,6 +857,8 @@ def assign_lead(lead_id):
         cursor.execute("SELECT id,name,owner_user_id AS ownerUserId FROM leads WHERE id=%s AND deleted_at IS NULL FOR UPDATE", (parsed_id,))
         lead = cursor.fetchone()
         if not lead:
+            return {"kind": "not_found"}
+        if g.user["role"] == "Manager" and lead["ownerUserId"] != g.user["id"]:
             return {"kind": "not_found"}
         cursor.execute("SELECT id,name FROM users WHERE id=%s AND role='Sale' AND status='ACTIVE'", (sale_id,))
         sale = cursor.fetchone()
@@ -972,12 +980,27 @@ def convert_lead(lead_id):
             (parsed_id,),
         )
         lead = cursor.fetchone()
-        if not lead or (g.user["role"] == "Sale" and lead["ownerUserId"] != g.user["id"]):
+        if not lead or (g.user["role"] != "Admin" and lead["ownerUserId"] != g.user["id"]):
             return {"kind": "not_found"}
         if lead["deletedAt"] or lead["status"] == "CONVERTED":
             return {"kind": "already_converted"}
         if lead["status"] != "QUALIFIED":
             return {"kind": "not_qualified"}
+        duplicate_values = []
+        duplicate_conditions = []
+        if lead["email"]:
+            duplicate_conditions.append("LOWER(email)=LOWER(%s)")
+            duplicate_values.append(lead["email"])
+        if lead["phone"]:
+            duplicate_conditions.append("phone=%s")
+            duplicate_values.append(lead["phone"])
+        if duplicate_conditions:
+            cursor.execute(
+                "SELECT id FROM accounts WHERE " + " OR ".join(duplicate_conditions) + " LIMIT 1",
+                tuple(duplicate_values),
+            )
+            if cursor.fetchone():
+                return {"kind": "duplicate_account"}
         name = account_name or lead["company"] or lead["name"]
         cursor.execute(
             "INSERT INTO accounts (owner_user_id,name,email,phone) VALUES (%s,%s,%s,%s)",
@@ -1012,6 +1035,8 @@ def convert_lead(lead_id):
         return json_error("Khách hàng tiềm năng đã được chuyển đổi.", 409)
     if result["kind"] == "not_qualified":
         return json_error("Chỉ có thể chuyển đổi Lead ở trạng thái QUALIFIED.", 409)
+    if result["kind"] == "duplicate_account":
+        return json_error("Đã tồn tại Account có cùng email hoặc số điện thoại. Hãy kiểm tra và liên kết thủ công trước khi chuyển đổi.", 409, code="DUPLICATE_ACCOUNT")
     return jsonify({"accountId": result["accountId"], "contactId": result["contactId"], "message": "Đã chuyển đổi lead thành khách hàng."}), 201
 
 
@@ -1179,7 +1204,7 @@ def _contacts_list(customer_api):
             values.append(positive_id(account_id))
         except ValueError as error:
             return json_error(str(error), 400)
-    if g.user["role"] == "Sale":
+    if g.user["role"] != "Admin":
         filters.extend(["c.owner_user_id=%s", "a.owner_user_id=%s"])
         values.extend([g.user["id"], g.user["id"]])
     if search:
@@ -1227,8 +1252,8 @@ def contacts_create():
         return validation_error([("body", str(error))])
     account_rows = query(
         "SELECT id,owner_user_id AS ownerUserId FROM accounts WHERE id=%s"
-        + (" AND owner_user_id=%s" if g.user["role"] == "Sale" else ""),
-        (data["accountId"], g.user["id"]) if g.user["role"] == "Sale" else (data["accountId"],),
+        + (" AND owner_user_id=%s" if g.user["role"] != "Admin" else ""),
+        (data["accountId"], g.user["id"]) if g.user["role"] != "Admin" else (data["accountId"],),
     )
     if not account_rows:
         return json_error("Không tìm thấy Account được liên kết.", 404)
@@ -1266,8 +1291,8 @@ def contact_update(contact_id):
     if "accountId" in data:
         account_rows = query(
             "SELECT id,owner_user_id AS ownerUserId FROM accounts WHERE id=%s"
-            + (" AND owner_user_id=%s" if g.user["role"] == "Sale" else ""),
-            (data["accountId"], g.user["id"]) if g.user["role"] == "Sale" else (data["accountId"],),
+            + (" AND owner_user_id=%s" if g.user["role"] != "Admin" else ""),
+            (data["accountId"], g.user["id"]) if g.user["role"] != "Admin" else (data["accountId"],),
         )
         if not account_rows:
             return json_error("Không tìm thấy Account được liên kết.", 404)
@@ -1312,7 +1337,7 @@ def customer_account_detail(account_id):
     )
     if not account_rows:
         return json_error("Không tìm thấy khách hàng.", 404)
-    sale_filter = " AND owner_user_id=%s" if g.user["role"] == "Sale" else ""
+    sale_filter = " AND owner_user_id=%s" if g.user["role"] != "Admin" else ""
     sale_values = (parsed_id, g.user["id"]) if sale_filter else (parsed_id,)
     contacts = query(
         "SELECT id,first_name AS firstName,last_name AS lastName,email,phone,job_title AS jobTitle "
@@ -1324,7 +1349,7 @@ def customer_account_detail(account_id):
         "FROM deals WHERE account_id=%s" + sale_filter + " ORDER BY updated_at DESC LIMIT 20",
         sale_values,
     )
-    activity_filter = " AND user_id=%s" if g.user["role"] == "Sale" else ""
+    activity_filter = " AND user_id=%s" if g.user["role"] != "Admin" else ""
     activity_values = (parsed_id, g.user["id"]) if activity_filter else (parsed_id,)
     activities = query(
         "SELECT id,activity_type AS type,subject,details,occurred_at AS occurredAt FROM activities "
