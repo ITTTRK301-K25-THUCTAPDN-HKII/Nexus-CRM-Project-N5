@@ -22,6 +22,10 @@ Node.js and npm are not required to run this version of the project. The Deal bo
    exist. If either is missing, run
    `packages/api/sql/migrations/003_lead_soft_delete.sql` once. Do not run that
    migration again after it has already been applied.
+4. For an existing database, check that `deals.version` exists. If it does not,
+   run `packages/api/sql/migrations/004_deal_version.sql` once to enable version
+   conflict checks when moving Deal cards. New databases get this column from
+   `schema.mysql.sql` automatically.
 
 ## 2. Configure the database connection
 

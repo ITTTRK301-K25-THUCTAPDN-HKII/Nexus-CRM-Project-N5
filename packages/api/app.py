@@ -406,7 +406,7 @@ def deals_list():
     """Trả danh sách Deal để giao diện chia vào năm cột Kanban."""
     own, values = ownership(g.user)
     rows = query(
-        "SELECT d.id,d.name,d.stage,d.amount,d.currency,"
+        "SELECT d.id,d.name,d.stage,d.amount,d.currency,d.version,"
         "d.expected_close_date AS expectedCloseDate,"
         "a.name AS accountName,u.name AS ownerName "
         "FROM deals d INNER JOIN accounts a ON a.id=d.account_id "
@@ -427,11 +427,14 @@ def deal_stage_update(deal_id):
         data = body_object()
         stage = data.get("stage")
         expected_stage = data.get("expectedStage")
+        expected_version = data.get("expectedVersion")
         lost_reason = clean_text(data.get("lostReason", ""), "Lý do thất bại", 1000)
         if stage not in ("PROSPECTING", "PROPOSAL", "NEGOTIATION", "WON", "LOST"):
             raise ValueError("Trạng thái Deal không hợp lệ.")
         if not isinstance(expected_stage, str):
             raise ValueError("Thiếu trạng thái hiện tại của Deal.")
+        if not isinstance(expected_version, int) or expected_version < 1:
+            raise ValueError("Phiên bản Deal không hợp lệ. Hãy tải lại bảng.")
     except ValueError as error:
         return json_error(str(error), 400)
 
@@ -445,12 +448,16 @@ def deal_stage_update(deal_id):
     def change_stage(cursor):
         # Khóa dòng Deal trong lúc cập nhật để hai lần kéo thả không ghi đè nhau.
         cursor.execute(
-            "SELECT id,owner_user_id AS ownerUserId,stage,amount,expected_close_date AS expectedCloseDate "
+            "SELECT id,owner_user_id AS ownerUserId,stage,amount,version,expected_close_date AS expectedCloseDate "
             "FROM deals WHERE id=%s FOR UPDATE", (parsed_id,),
         )
         deal = cursor.fetchone()
-        if not deal or (g.user["role"] != "Admin" and deal["ownerUserId"] != g.user["id"]):
+        if not deal:
             return {"kind": "not_found"}
+        if g.user["role"] != "Admin" and deal["ownerUserId"] != g.user["id"]:
+            return {"kind": "forbidden"}
+        if deal["version"] != expected_version:
+            return {"kind": "conflict"}
         if deal["stage"] != expected_stage:
             return {"kind": "conflict"}
         if stage not in transitions.get(deal["stage"], set()):
@@ -460,17 +467,23 @@ def deal_stage_update(deal_id):
         if stage == "LOST" and not lost_reason:
             return {"kind": "missing_lost_reason"}
 
-        cursor.execute("UPDATE deals SET stage=%s WHERE id=%s", (stage, parsed_id))
+        cursor.execute(
+            "UPDATE deals SET stage=%s,version=version+1 WHERE id=%s AND version=%s",
+            (stage, parsed_id, expected_version),
+        )
+        if cursor.rowcount != 1:
+            return {"kind": "conflict"}
         cursor.execute(
             "INSERT INTO deal_history (deal_id,changed_by_user_id,previous_stage,new_stage,previous_amount,new_amount,note) "
             "VALUES (%s,%s,%s,%s,%s,%s,%s)",
             (parsed_id, g.user["id"], deal["stage"], stage, deal["amount"], deal["amount"], lost_reason or None),
         )
-        return {"kind": "updated", "stage": stage}
+        return {"kind": "updated", "stage": stage, "version": expected_version + 1}
 
     result = transaction(change_stage)
     errors = {
         "not_found": ("Không tìm thấy Deal hoặc bạn không có quyền thao tác.", 404),
+        "forbidden": ("Bạn không có quyền cập nhật Deal này.", 403),
         "conflict": ("Deal đã được người khác cập nhật. Hãy tải lại bảng.", 409),
         "invalid_transition": ("Không thể chuyển Deal từ trạng thái hiện tại sang trạng thái này.", 409),
         "missing_won_data": ("Deal WON cần có số tiền lớn hơn 0 và ngày chốt.", 409),
@@ -479,7 +492,7 @@ def deal_stage_update(deal_id):
     if result["kind"] in errors:
         message, status = errors[result["kind"]]
         return json_error(message, status)
-    return jsonify({"id": parsed_id, "stage": result["stage"]})
+    return jsonify({"id": parsed_id, "stage": result["stage"], "version": result["version"]})
 
 
 @app.post("/api/auth/login")

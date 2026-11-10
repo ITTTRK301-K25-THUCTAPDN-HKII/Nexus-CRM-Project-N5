@@ -34,7 +34,7 @@ function DealColumn({ column, deals, children }) {
 // Component board quản lý dữ liệu cục bộ để card đổi cột ngay khi thả.
 function DealBoard({ deals: initialDeals, onStageChange }) {
   const [deals, setDeals] = useState(initialDeals);
-  const [message, setMessage] = useState('');
+  const [toast, setToast] = useState(null);
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 150, tolerance: 6 } }),
@@ -57,17 +57,25 @@ function DealBoard({ deals: initialDeals, onStageChange }) {
     const oldDeals = deals;
     const optimisticDeals = deals.map((item) => item.id === deal.id ? { ...item, stage: nextStage } : item);
     setDeals(optimisticDeals);
-    setMessage('');
+    setToast(null);
     try {
       await onStageChange(deal, nextStage);
     } catch (error) {
       setDeals(oldDeals);
-      setMessage(error.message || 'Không thể cập nhật trạng thái Deal.');
+      // Toast tự biến mất sau vài giây; card đã được trả về cột cũ ở trên.
+      setToast({ id: Date.now(), text: error.message || 'Không thể cập nhật trạng thái Deal.' });
     }
   }
 
+  // Tự đóng Toast cũ để thông báo lỗi không che bảng lâu.
+  useEffect(() => {
+    if (!toast) return undefined;
+    const timer = window.setTimeout(() => setToast(null), 4500);
+    return () => window.clearTimeout(timer);
+  }, [toast]);
+
   return <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
-    {message && <p className="alert error" role="alert">{message}</p>}
+    {toast && <div key={toast.id} className="deal-toast" role="alert" aria-live="assertive"><span className="deal-toast-mark">!</span><span>{toast.text}</span><button type="button" aria-label="Đóng thông báo" onClick={() => setToast(null)}>×</button></div>}
     <div className="deal-board" aria-label="Bảng Deal gồm năm trạng thái">
       {COLUMNS.map((column) => {
         const columnDeals = deals.filter((deal) => getBoardStage(deal.stage) === column.id);
