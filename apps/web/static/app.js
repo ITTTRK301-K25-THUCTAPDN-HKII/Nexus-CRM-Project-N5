@@ -5,6 +5,8 @@ const state = {
   error: '',
   notice: '',
   users: [],
+  deals: [],
+  dealsLoaded: false,
   usersLoaded: false,
   customerItems: [],
   customerView: 'leads',
@@ -75,6 +77,7 @@ function appSidebar(active = 'customers') {
     <div class="nav-label">WORKSPACE</div>
     ${state.user?.role === 'Admin' ? '<a class="nav-item" href="/admin/users">♙ &nbsp; Quản lý người dùng</a>' : ''}
     <a class="nav-item ${active === 'customers' ? 'active' : ''}" href="/customers">♧ &nbsp; Khách hàng</a>
+    <a class="nav-item ${active === 'deals' ? 'active' : ''}" href="/deals">▤ &nbsp; Cơ hội Deal</a>
     <a class="nav-item ${active === 'workspace' ? 'active' : ''}" href="/workspace">▦ &nbsp; Tổng quan</a>
     <div class="sidebar-bottom"><div class="profile-chip"><div class="avatar">${initials(state.user?.name)}</div><div><strong>${escapeHtml(state.user?.name)}</strong><span>${escapeHtml(state.user?.role)}</span></div></div>
     <button class="logout-button" data-action="logout">↪ &nbsp; Đăng xuất</button></div></aside>`;
@@ -120,7 +123,57 @@ function workspacePage() {
   return `<main class="simple-page"><section class="simple-card workspace-card">${brand}<div class="icon-tile">◈</div>
     <span class="eyebrow">ĐĂNG NHẬP THÀNH CÔNG</span><h1>Xin chào, ${escapeHtml(state.user?.name)}</h1>
     <p class="muted">Vai trò: <strong>${escapeHtml(state.user?.role)}</strong>. Trang quản lý người dùng chỉ dành cho Admin.</p>
-    <a class="primary-button full-width" href="/customers">Mở module khách hàng</a><button class="secondary-button full-width" data-action="logout">↪ &nbsp; Đăng xuất</button></section></main>`;
+     <a class="primary-button full-width" href="/customers">Mở module khách hàng</a><a class="secondary-button full-width" href="/deals">Mở bảng Deal</a><button class="secondary-button full-width" data-action="logout">↪ &nbsp; Đăng xuất</button></section></main>`;
+}
+
+// Chuyển stage từ database thành 5 cột mà người dùng nhìn thấy trên Kanban.
+function visibleDealStage(stage) {
+  if (stage === 'PROSPECTING' || stage === 'QUALIFICATION' || stage === 'LEAD') return 'LEAD';
+  return ['PROPOSAL', 'NEGOTIATION', 'WON', 'LOST'].includes(stage) ? stage : 'LEAD';
+}
+
+// Hiển thị ngày chốt dưới dạng badge để người dùng nhận ra Deal sắp hoặc đã quá hạn.
+function closeDateBadge(value) {
+  if (!value) return '<span class="deal-date-badge date-empty">Chưa có ngày chốt</span>';
+  const date = new Date(`${String(value).slice(0, 10)}T00:00:00`);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const label = date.toLocaleDateString('vi-VN');
+  const stateClass = date < today ? 'date-overdue' : date.getTime() === today.getTime() ? 'date-today' : 'date-upcoming';
+  return `<span class="deal-date-badge ${stateClass}">Chốt: ${label}</span>`;
+}
+
+// Tạo một card Deal gồm tên, khách hàng, số tiền, ngày chốt và người phụ trách.
+function dealCard(deal) {
+  const owner = deal.ownerName || 'Chưa phân công';
+  const ownerInitials = owner.split(/\s+/).filter(Boolean).slice(-2).map((part) => part[0]).join('').toUpperCase() || '?';
+  const amount = Number(deal.amount || 0).toLocaleString('vi-VN');
+  return `<article class="deal-card">
+    <div class="deal-card-heading"><strong>${escapeHtml(deal.name)}</strong><span class="deal-id">#${escapeHtml(deal.id)}</span></div>
+    <div class="deal-customer"><span class="deal-field-label">KHÁCH HÀNG</span><span>${escapeHtml(deal.accountName || 'Chưa liên kết khách hàng')}</span></div>
+    <div class="deal-amount"><span class="deal-field-label">GIÁ TRỊ DEAL</span><strong>${amount} ${escapeHtml(deal.currency || 'VND')}</strong></div>
+    ${closeDateBadge(deal.expectedCloseDate)}
+    <div class="deal-owner"><span class="avatar deal-avatar" aria-hidden="true">${escapeHtml(ownerInitials)}</span><span><small>Phụ trách</small><strong>${escapeHtml(owner)}</strong></span></div>
+  </article>`;
+}
+
+// Dựng năm cột theo pipeline; các stage cũ PROSPECTING/QUALIFICATION được gom vào LEAD.
+function dealsPage() {
+  const columns = [
+    ['LEAD', 'Lead'], ['PROPOSAL', 'Đề xuất'], ['NEGOTIATION', 'Thương lượng'],
+    ['WON', 'Thành công'], ['LOST', 'Thất bại'],
+  ];
+  return `<div class="app-shell">${appSidebar('deals')}<main class="deals-content">
+    <header class="topbar"><div><span class="eyebrow">SALES PIPELINE</span><h1>Cơ hội kinh doanh</h1></div><div class="admin-avatar">${escapeHtml(state.user?.role || '')}</div></header>
+    ${alertBox(state.error)}
+    ${!state.deals.length && !state.error ? '<p class="muted deal-empty">Chưa có Deal để hiển thị.</p>' : ''}
+    <section class="deal-board" aria-label="Bảng Deal gồm năm trạng thái">
+      ${columns.map(([stage, title]) => {
+        const items = state.deals.filter((deal) => visibleDealStage(deal.stage) === stage);
+        return `<section class="deal-column" aria-label="${title}: ${items.length} Deal"><header class="deal-column-header"><h2>${title}</h2><span>${items.length}</span></header><div class="deal-column-cards">${items.map(dealCard).join('')}</div></section>`;
+      }).join('')}
+    </section>
+  </main></div>`;
 }
 function adminPage() {
   const filtered = state.users.filter((user) => `${user.name} ${user.email} ${user.role}`.toLowerCase().includes((state.adminSearch || '').toLowerCase()));
@@ -242,6 +295,18 @@ async function loadUsers() {
   }
   if (route() === '/admin/users') render();
 }
+// Lấy Deal từ API một lần khi mở board, sau đó render lại để đổ card vào cột.
+async function loadDeals() {
+  try {
+    const result = await api('/deals');
+    state.deals = result.deals || [];
+    state.dealsLoaded = true;
+    state.error = '';
+  } catch (error) {
+    state.error = error.message;
+  }
+  if (route() === '/deals') render();
+}
 function render() {
   if (state.loading) {
     root.innerHTML = '<div class="loading-screen">Đang tải phiên đăng nhập...</div>';
@@ -275,6 +340,9 @@ function render() {
     root.innerHTML = accountDetailPage();
     const id = path.split('/').pop();
     if (!state.detail) void loadDetail(id);
+  } else if (path === '/deals') {
+    root.innerHTML = dealsPage();
+    if (!state.dealsLoaded) void loadDeals();
   } else if (path === '/workspace') root.innerHTML = workspacePage();
   else navigate(state.user?.role === 'Admin' ? '/admin/users' : '/workspace', true);
 }
