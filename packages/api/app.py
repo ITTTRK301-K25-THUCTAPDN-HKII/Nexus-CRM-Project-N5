@@ -400,6 +400,24 @@ def health():
     return jsonify({"status": "ok"})
 
 
+@app.get("/api/deals")
+@auth_required
+def deals_list():
+    """Trả danh sách Deal để giao diện chia vào năm cột Kanban."""
+    own, values = ownership(g.user)
+    rows = query(
+        "SELECT d.id,d.name,d.stage,d.amount,d.currency,"
+        "d.expected_close_date AS expectedCloseDate,"
+        "a.name AS accountName,u.name AS ownerName "
+        "FROM deals d INNER JOIN accounts a ON a.id=d.account_id "
+        "INNER JOIN users u ON u.id=d.owner_user_id" +
+        (" WHERE d.owner_user_id=%s" if own else "") +
+        " ORDER BY d.expected_close_date IS NULL,d.expected_close_date,d.id",
+        tuple(values),
+    )
+    return jsonify({"deals": rows})
+
+
 @app.post("/api/auth/login")
 def login():
     data = request.get_json(silent=True) or {}
@@ -1371,6 +1389,7 @@ def styles():
 @app.get("/admin/users")
 @app.get("/customers")
 @app.get("/customers/accounts/<account_id>")
+@app.get("/deals")
 @app.get("/workspace")
 def web_app(**_kwargs):
     return render_template("index.html")
