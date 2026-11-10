@@ -25,6 +25,7 @@ const state = {
 let customerRequest = '';
 let customerDebounce;
 let refreshRequest;
+let unmountDealBoard = null;
 
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -64,6 +65,11 @@ const api = async (path, options = {}, retried = false) => {
   return data;
 };
 function navigate(path, replace = false) {
+  // Dọn React board trước khi thay nội dung trang để không giữ listener kéo thả cũ.
+  if (unmountDealBoard) {
+    unmountDealBoard();
+    unmountDealBoard = null;
+  }
   if (replace) history.replaceState({}, '', path);
   else history.pushState({}, '', path);
   state.error = '';
@@ -126,54 +132,30 @@ function workspacePage() {
      <a class="primary-button full-width" href="/customers">Mở module khách hàng</a><a class="secondary-button full-width" href="/deals">Mở bảng Deal</a><button class="secondary-button full-width" data-action="logout">↪ &nbsp; Đăng xuất</button></section></main>`;
 }
 
-// Chuyển stage từ database thành 5 cột mà người dùng nhìn thấy trên Kanban.
-function visibleDealStage(stage) {
-  if (stage === 'PROSPECTING' || stage === 'QUALIFICATION' || stage === 'LEAD') return 'LEAD';
-  return ['PROPOSAL', 'NEGOTIATION', 'WON', 'LOST'].includes(stage) ? stage : 'LEAD';
-}
-
-// Hiển thị ngày chốt dưới dạng badge để người dùng nhận ra Deal sắp hoặc đã quá hạn.
-function closeDateBadge(value) {
-  if (!value) return '<span class="deal-date-badge date-empty">Chưa có ngày chốt</span>';
-  const date = new Date(`${String(value).slice(0, 10)}T00:00:00`);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const label = date.toLocaleDateString('vi-VN');
-  const stateClass = date < today ? 'date-overdue' : date.getTime() === today.getTime() ? 'date-today' : 'date-upcoming';
-  return `<span class="deal-date-badge ${stateClass}">Chốt: ${label}</span>`;
-}
-
-// Tạo một card Deal gồm tên, khách hàng, số tiền, ngày chốt và người phụ trách.
-function dealCard(deal) {
-  const owner = deal.ownerName || 'Chưa phân công';
-  const ownerInitials = owner.split(/\s+/).filter(Boolean).slice(-2).map((part) => part[0]).join('').toUpperCase() || '?';
-  const amount = Number(deal.amount || 0).toLocaleString('vi-VN');
-  return `<article class="deal-card">
-    <div class="deal-card-heading"><strong>${escapeHtml(deal.name)}</strong><span class="deal-id">#${escapeHtml(deal.id)}</span></div>
-    <div class="deal-customer"><span class="deal-field-label">KHÁCH HÀNG</span><span>${escapeHtml(deal.accountName || 'Chưa liên kết khách hàng')}</span></div>
-    <div class="deal-amount"><span class="deal-field-label">GIÁ TRỊ DEAL</span><strong>${amount} ${escapeHtml(deal.currency || 'VND')}</strong></div>
-    ${closeDateBadge(deal.expectedCloseDate)}
-    <div class="deal-owner"><span class="avatar deal-avatar" aria-hidden="true">${escapeHtml(ownerInitials)}</span><span><small>Phụ trách</small><strong>${escapeHtml(owner)}</strong></span></div>
-  </article>`;
-}
-
-// Dựng năm cột theo pipeline; các stage cũ PROSPECTING/QUALIFICATION được gom vào LEAD.
+// Tạo vỏ trang và chỗ mount React; DnD Kit quản lý cột và card bên trong.
 function dealsPage() {
-  const columns = [
-    ['LEAD', 'Lead'], ['PROPOSAL', 'Đề xuất'], ['NEGOTIATION', 'Thương lượng'],
-    ['WON', 'Thành công'], ['LOST', 'Thất bại'],
-  ];
   return `<div class="app-shell">${appSidebar('deals')}<main class="deals-content">
     <header class="topbar"><div><span class="eyebrow">SALES PIPELINE</span><h1>Cơ hội kinh doanh</h1></div><div class="admin-avatar">${escapeHtml(state.user?.role || '')}</div></header>
     ${alertBox(state.error)}
-    ${!state.deals.length && !state.error ? '<p class="muted deal-empty">Chưa có Deal để hiển thị.</p>' : ''}
-    <section class="deal-board" aria-label="Bảng Deal gồm năm trạng thái">
-      ${columns.map(([stage, title]) => {
-        const items = state.deals.filter((deal) => visibleDealStage(deal.stage) === stage);
-        return `<section class="deal-column" aria-label="${title}: ${items.length} Deal"><header class="deal-column-header"><h2>${title}</h2><span>${items.length}</span></header><div class="deal-column-cards">${items.map(dealCard).join('')}</div></section>`;
-      }).join('')}
-    </section>
+    ${state.dealsLoaded && !state.deals.length ? '<p class="muted deal-empty">Chưa có Deal để hiển thị.</p>' : ''}
+    <div id="deal-board-root"></div>
   </main></div>`;
+}
+
+// Lưu stage mới; khi kéo vào LOST, hỏi lý do để backend có đủ dữ liệu nghiệp vụ.
+async function updateDealStage(deal, boardStage) {
+  let lostReason = '';
+  if (boardStage === 'LOST') {
+    lostReason = window.prompt('Nhập lý do Deal thất bại:')?.trim() || '';
+    if (!lostReason) throw new Error('Đã hủy thao tác hoặc chưa nhập lý do thất bại.');
+  }
+  const databaseStage = boardStage === 'LEAD' ? 'PROSPECTING' : boardStage;
+  const result = await api(`/deals/${encodeURIComponent(deal.id)}/stage`, {
+    method: 'PATCH',
+    body: JSON.stringify({ stage: databaseStage, expectedStage: deal.stage, lostReason }),
+  });
+  // Lưu stage đã được server xác nhận cho lần kéo tiếp theo.
+  state.deals = state.deals.map((item) => item.id === deal.id ? { ...item, stage: result.stage } : item);
 }
 function adminPage() {
   const filtered = state.users.filter((user) => `${user.name} ${user.email} ${user.role}`.toLowerCase().includes((state.adminSearch || '').toLowerCase()));
@@ -342,6 +324,12 @@ function render() {
     if (!state.detail) void loadDetail(id);
   } else if (path === '/deals') {
     root.innerHTML = dealsPage();
+    if (state.dealsLoaded && window.mountDealBoard) {
+      unmountDealBoard = window.mountDealBoard(document.getElementById('deal-board-root'), {
+        deals: state.deals,
+        onStageChange: updateDealStage,
+      });
+    }
     if (!state.dealsLoaded) void loadDeals();
   } else if (path === '/workspace') root.innerHTML = workspacePage();
   else navigate(state.user?.role === 'Admin' ? '/admin/users' : '/workspace', true);

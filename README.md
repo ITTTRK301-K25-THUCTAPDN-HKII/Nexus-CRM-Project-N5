@@ -9,7 +9,7 @@ and JavaScript for the interface. MySQL stores application data.
 - MySQL Server 8.0 or newer
 - Windows PowerShell (commands below use Windows paths)
 
-Node.js and npm are not required to run this version of the project.
+Node.js and npm are not required to run this version of the project. The Deal board's React and DnD Kit code is already bundled in `apps/web/static/deal-board.js`. Node.js and npm are needed only when rebuilding that bundle after editing its source.
 
 ## 1. Prepare MySQL
 
@@ -75,6 +75,19 @@ already exist:
 
 Password reset links are written to the development mailbox table. Real email
 delivery is not configured.
+
+## Rebuild the Deal board after changing its React source
+
+From the repository root, run these commands after editing `apps/web/src/deal-board.jsx`:
+
+```powershell
+Set-Location apps\web
+npm install
+npm run build
+Set-Location ..\..
+```
+
+Vite writes the browser-ready bundle to `apps/web/static/deal-board.js`, which Flask serves with the rest of the static files.
 
 ## Tests
 

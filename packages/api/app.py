@@ -418,6 +418,70 @@ def deals_list():
     return jsonify({"deals": rows})
 
 
+@app.patch("/api/deals/<deal_id>/stage")
+@auth_required
+def deal_stage_update(deal_id):
+    """Đổi stage trong transaction, kiểm tra owner và ghi DealHistory."""
+    try:
+        parsed_id = positive_id(deal_id)
+        data = body_object()
+        stage = data.get("stage")
+        expected_stage = data.get("expectedStage")
+        lost_reason = clean_text(data.get("lostReason", ""), "Lý do thất bại", 1000)
+        if stage not in ("PROSPECTING", "PROPOSAL", "NEGOTIATION", "WON", "LOST"):
+            raise ValueError("Trạng thái Deal không hợp lệ.")
+        if not isinstance(expected_stage, str):
+            raise ValueError("Thiếu trạng thái hiện tại của Deal.")
+    except ValueError as error:
+        return json_error(str(error), 400)
+
+    transitions = {
+        "PROSPECTING": {"PROPOSAL"}, "QUALIFICATION": {"PROPOSAL"},
+        "PROPOSAL": {"PROSPECTING", "NEGOTIATION"},
+        "NEGOTIATION": {"PROPOSAL", "WON", "LOST"},
+        "WON": set(), "LOST": set(),
+    }
+
+    def change_stage(cursor):
+        # Khóa dòng Deal trong lúc cập nhật để hai lần kéo thả không ghi đè nhau.
+        cursor.execute(
+            "SELECT id,owner_user_id AS ownerUserId,stage,amount,expected_close_date AS expectedCloseDate "
+            "FROM deals WHERE id=%s FOR UPDATE", (parsed_id,),
+        )
+        deal = cursor.fetchone()
+        if not deal or (g.user["role"] != "Admin" and deal["ownerUserId"] != g.user["id"]):
+            return {"kind": "not_found"}
+        if deal["stage"] != expected_stage:
+            return {"kind": "conflict"}
+        if stage not in transitions.get(deal["stage"], set()):
+            return {"kind": "invalid_transition"}
+        if stage == "WON" and (Decimal(str(deal["amount"] or 0)) <= 0 or not deal["expectedCloseDate"]):
+            return {"kind": "missing_won_data"}
+        if stage == "LOST" and not lost_reason:
+            return {"kind": "missing_lost_reason"}
+
+        cursor.execute("UPDATE deals SET stage=%s WHERE id=%s", (stage, parsed_id))
+        cursor.execute(
+            "INSERT INTO deal_history (deal_id,changed_by_user_id,previous_stage,new_stage,previous_amount,new_amount,note) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+            (parsed_id, g.user["id"], deal["stage"], stage, deal["amount"], deal["amount"], lost_reason or None),
+        )
+        return {"kind": "updated", "stage": stage}
+
+    result = transaction(change_stage)
+    errors = {
+        "not_found": ("Không tìm thấy Deal hoặc bạn không có quyền thao tác.", 404),
+        "conflict": ("Deal đã được người khác cập nhật. Hãy tải lại bảng.", 409),
+        "invalid_transition": ("Không thể chuyển Deal từ trạng thái hiện tại sang trạng thái này.", 409),
+        "missing_won_data": ("Deal WON cần có số tiền lớn hơn 0 và ngày chốt.", 409),
+        "missing_lost_reason": ("Deal LOST cần có lý do thất bại.", 400),
+    }
+    if result["kind"] in errors:
+        message, status = errors[result["kind"]]
+        return json_error(message, status)
+    return jsonify({"id": parsed_id, "stage": result["stage"]})
+
+
 @app.post("/api/auth/login")
 def login():
     data = request.get_json(silent=True) or {}
