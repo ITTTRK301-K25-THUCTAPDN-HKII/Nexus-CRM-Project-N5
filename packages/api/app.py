@@ -6,7 +6,7 @@ import threading
 import time
 from datetime import date
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from functools import wraps
 from pathlib import Path
 from urllib.parse import quote
@@ -351,6 +351,90 @@ def can_access_customer(user, entity, entity_id):
     if entity == "leads":
         extra += " AND deleted_at IS NULL"
     return bool(query(f"SELECT id FROM {entity} WHERE id=%s{extra} LIMIT 1", values))
+
+
+def deal_scope(user, alias=""):
+    if user["role"] in ("Admin", "Manager"):
+        return "", []
+    return f"{alias}owner_user_id=%s", [user["id"]]
+
+
+def deal_payload(data, partial=False):
+    allowed = {
+        "accountId", "contactId", "ownerUserId", "name", "amount", "currency",
+        "stage", "probability", "expectedCloseDate",
+    }
+    if any(field not in allowed for field in data):
+        raise ValueError("Dữ liệu Deal chứa trường không hợp lệ.")
+    if not partial and not {"accountId", "name"}.issubset(data):
+        raise ValueError("Deal cần có Account và tên.")
+
+    result = {}
+    if "accountId" in data or not partial:
+        result["accountId"] = positive_id(data.get("accountId"))
+    if "contactId" in data:
+        result["contactId"] = None if data["contactId"] in (None, "") else positive_id(data["contactId"])
+    if "ownerUserId" in data:
+        result["ownerUserId"] = positive_id(data["ownerUserId"])
+    if "name" in data or not partial:
+        result["name"] = clean_text(data.get("name"), "Tên Deal", 180, True, 2)
+    if "amount" in data:
+        try:
+            amount = Decimal(str(data["amount"]))
+        except (InvalidOperation, ValueError):
+            raise ValueError("Giá trị Deal không hợp lệ.")
+        if not amount.is_finite() or amount < 0 or amount > Decimal("9999999999999.99"):
+            raise ValueError("Giá trị Deal phải nằm trong khoảng 0 đến 9999999999999.99.")
+        result["amount"] = amount.quantize(Decimal("0.01"))
+    if "currency" in data:
+        currency = clean_text(data["currency"], "Loại tiền", 3, True, 3).upper()
+        if not re.fullmatch(r"[A-Z]{3}", currency):
+            raise ValueError("Loại tiền phải gồm 3 ký tự chữ.")
+        result["currency"] = currency
+    if "stage" in data:
+        stage = data["stage"]
+        if stage not in ("PROSPECTING", "QUALIFICATION", "PROPOSAL", "NEGOTIATION", "WON", "LOST"):
+            raise ValueError("Giai đoạn Deal không hợp lệ.")
+        result["stage"] = stage
+    if "probability" in data:
+        try:
+            probability = int(data["probability"])
+        except (TypeError, ValueError):
+            raise ValueError("Xác suất Deal không hợp lệ.")
+        if isinstance(data["probability"], bool) or str(probability) != str(data["probability"]) or not 0 <= probability <= 100:
+            raise ValueError("Xác suất Deal phải từ 0 đến 100.")
+        result["probability"] = probability
+    if "expectedCloseDate" in data:
+        close_date = data["expectedCloseDate"]
+        if close_date in (None, ""):
+            result["expectedCloseDate"] = None
+        else:
+            try:
+                datetime.strptime(close_date, "%Y-%m-%d")
+            except (TypeError, ValueError):
+                raise ValueError("Ngày dự kiến kết thúc không hợp lệ.")
+            result["expectedCloseDate"] = close_date
+    return result
+
+
+def validate_deal_relations(cursor, deal_data, owner_id):
+    account_id = deal_data.get("accountId")
+    if account_id is None:
+        return
+    cursor.execute(
+        "SELECT id FROM accounts WHERE id=%s AND owner_user_id=%s",
+        (account_id, owner_id),
+    )
+    if not cursor.fetchone():
+        raise LookupError("Không tìm thấy Account thuộc nhân viên phụ trách Deal.")
+    contact_id = deal_data.get("contactId")
+    if contact_id is not None:
+        cursor.execute(
+            "SELECT id FROM contacts WHERE id=%s AND account_id=%s AND owner_user_id=%s",
+            (contact_id, account_id, owner_id),
+        )
+        if not cursor.fetchone():
+            raise LookupError("Contact phải thuộc Account và nhân viên phụ trách Deal.")
 
 
 def lead_payload(data, require_name=True):
@@ -1293,6 +1377,228 @@ def contact_delete(contact_id):
         return json_error("Không tìm thấy Contact.", 404)
     execute("DELETE FROM contacts WHERE id=%s", (parsed_id,))
     return "", 204
+
+
+def deal_select(where=""):
+    return (
+        "SELECT d.id,d.account_id AS accountId,a.name AS accountName,"
+        "d.contact_id AS contactId,CONCAT_WS(' ',c.first_name,c.last_name) AS contactName,"
+        "d.owner_user_id AS ownerUserId,u.name AS ownerName,d.name,d.amount,d.currency,"
+        "d.stage,d.probability,d.expected_close_date AS expectedCloseDate,"
+        "d.created_at AS createdAt,d.updated_at AS updatedAt "
+        "FROM deals d INNER JOIN accounts a ON a.id=d.account_id "
+        "INNER JOIN users u ON u.id=d.owner_user_id "
+        "LEFT JOIN contacts c ON c.id=d.contact_id" + where
+    )
+
+
+@app.get("/api/deals")
+@auth_required
+def deals_list():
+    page, page_size, offset, search = page_options()
+    scope, values = deal_scope(g.user, "d.")
+    filters = [scope] if scope else []
+    if search:
+        filters.append("(d.name LIKE %s OR a.name LIKE %s)")
+        values.extend([f"%{search}%"] * 2)
+    stage = request.args.get("stage")
+    if stage:
+        if stage not in ("PROSPECTING", "QUALIFICATION", "PROPOSAL", "NEGOTIATION", "WON", "LOST"):
+            return json_error("Giai đoạn Deal không hợp lệ.", 400)
+        filters.append("d.stage=%s")
+        values.append(stage)
+    account_id = request.args.get("accountId")
+    if account_id:
+        try:
+            filters.append("d.account_id=%s")
+            values.append(positive_id(account_id))
+        except ValueError as error:
+            return json_error(str(error), 400)
+    where = " WHERE " + " AND ".join(filters) if filters else ""
+    items = query(
+        deal_select(where) + " ORDER BY d.updated_at DESC,d.id DESC LIMIT %s OFFSET %s",
+        tuple(values + [page_size, offset]),
+    )
+    total = query(
+        "SELECT COUNT(*) AS total FROM deals d INNER JOIN accounts a ON a.id=d.account_id" + where,
+        tuple(values),
+    )[0]["total"]
+    return jsonify({"items": items, "page": page, "pageSize": page_size, "total": total})
+
+
+@app.post("/api/deals")
+@auth_required
+def deal_create():
+    try:
+        data = deal_payload(body_object())
+        if g.user["role"] == "Sale":
+            requested_owner = data.get("ownerUserId", g.user["id"])
+            if requested_owner != g.user["id"]:
+                return json_error("Sale chỉ được tạo Deal cho chính mình.", 403)
+            owner_id = g.user["id"]
+        else:
+            if "ownerUserId" not in data:
+                raise ValueError("Cần chỉ định nhân viên Sale phụ trách Deal.")
+            owner_id = data["ownerUserId"]
+    except ValueError as error:
+        return validation_error([("body", str(error))])
+
+    def create(cursor):
+        cursor.execute(
+            "SELECT id FROM users WHERE id=%s AND role='Sale' AND status='ACTIVE'",
+            (owner_id,),
+        )
+        if not cursor.fetchone():
+            raise LookupError("Nhân viên phụ trách phải là Sale đang hoạt động.")
+        validate_deal_relations(cursor, data, owner_id)
+        cursor.execute(
+            "INSERT INTO deals (account_id,contact_id,owner_user_id,name,amount,currency,stage,probability,expected_close_date) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (
+                data["accountId"], data.get("contactId"), owner_id, data["name"],
+                data.get("amount", Decimal("0.00")), data.get("currency", "USD"),
+                data.get("stage", "PROSPECTING"), data.get("probability", 0),
+                data.get("expectedCloseDate"),
+            ),
+        )
+        deal_id = cursor.lastrowid
+        cursor.execute(
+            "INSERT INTO deal_history (deal_id,changed_by_user_id,previous_stage,new_stage,previous_amount,new_amount,note) "
+            "VALUES (%s,%s,NULL,%s,NULL,%s,%s)",
+            (
+                deal_id, g.user["id"], data.get("stage", "PROSPECTING"),
+                data.get("amount", Decimal("0.00")), "Tạo Deal",
+            ),
+        )
+        return deal_id
+
+    try:
+        deal_id = transaction(create)
+    except LookupError as error:
+        return json_error(str(error), 404)
+    deal = query(deal_select(" WHERE d.id=%s"), (deal_id,))[0]
+    return jsonify({"deal": deal}), 201
+
+
+@app.get("/api/deals/<deal_id>")
+@auth_required
+def deal_get(deal_id):
+    try:
+        parsed_id = positive_id(deal_id)
+    except ValueError as error:
+        return json_error(str(error), 400)
+    scope, values = deal_scope(g.user, "d.")
+    where = " WHERE d.id=%s" + (f" AND {scope}" if scope else "")
+    rows = query(deal_select(where), tuple([parsed_id] + values))
+    if not rows:
+        return json_error("Không tìm thấy Deal.", 404)
+    return jsonify({"deal": rows[0]})
+
+
+@app.patch("/api/deals/<deal_id>")
+@app.put("/api/deals/<deal_id>")
+@auth_required
+def deal_update(deal_id):
+    try:
+        parsed_id = positive_id(deal_id)
+        data = deal_payload(body_object(), partial=True)
+    except ValueError as error:
+        return validation_error([("body", str(error))])
+    if not data:
+        return json_error("Cần cung cấp ít nhất một trường để cập nhật.", 400)
+    if "ownerUserId" in data and g.user["role"] not in ("Admin", "Manager"):
+        return json_error("Bạn không có quyền chuyển Deal sang nhân viên khác.", 403)
+
+    def update(cursor):
+        scope, scope_values = deal_scope(g.user)
+        where = "id=%s" + (f" AND {scope}" if scope else "")
+        cursor.execute(
+            "SELECT id,account_id AS accountId,contact_id AS contactId,owner_user_id AS ownerUserId,"
+            "name,amount,currency,stage,probability,expected_close_date AS expectedCloseDate "
+            "FROM deals WHERE " + where + " FOR UPDATE",
+            tuple([parsed_id] + scope_values),
+        )
+        existing = cursor.fetchone()
+        if not existing:
+            return None
+
+        updated = dict(existing)
+        updated.update(data)
+        owner_id = updated["ownerUserId"]
+        if "ownerUserId" in data:
+            cursor.execute(
+                "SELECT id FROM users WHERE id=%s AND role='Sale' AND status='ACTIVE'",
+                (owner_id,),
+            )
+            if not cursor.fetchone():
+                raise LookupError("Nhân viên phụ trách phải là Sale đang hoạt động.")
+        validate_deal_relations(cursor, updated, owner_id)
+
+        columns = {
+            "accountId": "account_id", "contactId": "contact_id",
+            "ownerUserId": "owner_user_id", "name": "name", "amount": "amount",
+            "currency": "currency", "stage": "stage", "probability": "probability",
+            "expectedCloseDate": "expected_close_date",
+        }
+        if data:
+            assignments = [f"{columns[field]}=%s" for field in data]
+            cursor.execute(
+                "UPDATE deals SET " + ",".join(assignments) + " WHERE id=%s",
+                tuple(list(data.values()) + [parsed_id]),
+            )
+
+        stage_changed = updated["stage"] != existing["stage"]
+        amount_changed = Decimal(str(updated["amount"])) != Decimal(str(existing["amount"]))
+        if stage_changed or amount_changed:
+            changes = []
+            if stage_changed:
+                changes.append(f"Giai đoạn: {existing['stage']} → {updated['stage']}")
+            if amount_changed:
+                changes.append(f"Giá trị: {existing['amount']} → {updated['amount']}")
+            cursor.execute(
+                "INSERT INTO deal_history (deal_id,changed_by_user_id,previous_stage,new_stage,previous_amount,new_amount,note) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                (
+                    parsed_id, g.user["id"], existing["stage"], updated["stage"],
+                    existing["amount"], updated["amount"], "; ".join(changes),
+                ),
+            )
+        return parsed_id
+
+    try:
+        result_id = transaction(update)
+    except LookupError as error:
+        return json_error(str(error), 404)
+    if result_id is None:
+        return json_error("Không tìm thấy Deal.", 404)
+    deal = query(deal_select(" WHERE d.id=%s"), (result_id,))[0]
+    return jsonify({"deal": deal})
+
+
+@app.get("/api/deals/<deal_id>/history")
+@auth_required
+def deal_history(deal_id):
+    try:
+        parsed_id = positive_id(deal_id)
+    except ValueError as error:
+        return json_error(str(error), 400)
+    scope, values = deal_scope(g.user, "d.")
+    where = "d.id=%s" + (f" AND {scope}" if scope else "")
+    if not query(
+        "SELECT d.id FROM deals d WHERE " + where + " LIMIT 1",
+        tuple([parsed_id] + values),
+    ):
+        return json_error("Không tìm thấy Deal.", 404)
+    history = query(
+        "SELECT h.id,h.deal_id AS dealId,h.changed_by_user_id AS changedByUserId,"
+        "u.name AS changedByName,h.previous_stage AS previousStage,h.new_stage AS newStage,"
+        "h.previous_amount AS previousAmount,h.new_amount AS newAmount,h.note,"
+        "h.changed_at AS changedAt FROM deal_history h "
+        "LEFT JOIN users u ON u.id=h.changed_by_user_id "
+        "WHERE h.deal_id=%s ORDER BY h.changed_at ASC,h.id ASC",
+        (parsed_id,),
+    )
+    return jsonify({"history": history})
 
 
 @app.get("/api/customers/accounts/<account_id>")

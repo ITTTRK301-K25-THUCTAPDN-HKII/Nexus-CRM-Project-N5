@@ -1,44 +1,44 @@
 # Nexus CRM
 
-Nexus CRM uses Flask (Python) for the API and web server, with plain HTML, CSS
-and JavaScript for the interface. MySQL stores application data.
+Nexus CRM sử dụng Flask (Python) cho API và máy chủ web; giao diện được xây dựng
+bằng HTML, CSS và JavaScript thuần. Dữ liệu ứng dụng được lưu trong MySQL.
 
-## Requirements
+## Yêu cầu
 
-- Python 3.11 or newer
-- MySQL Server 8.0 or newer
-- Windows PowerShell (commands below use Windows paths)
+- Python 3.11 trở lên
+- MySQL Server 8.0 trở lên
+- Windows PowerShell (các lệnh bên dưới sử dụng đường dẫn Windows)
 
-Node.js and npm are not required to run this version of the project.
+Phiên bản dự án này không cần Node.js hoặc npm để chạy.
 
-## 1. Prepare MySQL
+## 1. Chuẩn bị MySQL
 
-1. Start MySQL Server and connect to it with MySQL Workbench or another MySQL
-   client.
-2. Open `packages/api/sql/schema.mysql.sql` and execute the whole script. It
-   creates the `nexus_crm` database and the tables used by the application.
-3. If you already have a database created from an older version of the schema,
-   check whether `leads.deleted_at` and the `idx_leads_active_created` index
-   exist. If either is missing, run
-   `packages/api/sql/migrations/003_lead_soft_delete.sql` once. Do not run that
-   migration again after it has already been applied.
+1. Khởi động MySQL Server và kết nối bằng MySQL Workbench hoặc một công cụ
+   MySQL khác.
+2. Mở `packages/api/sql/schema.mysql.sql` và chạy toàn bộ tập lệnh. Tập lệnh
+   tạo cơ sở dữ liệu `nexus_crm` và các bảng ứng dụng sử dụng.
+3. Nếu bạn đã có cơ sở dữ liệu từ phiên bản schema cũ, hãy kiểm tra cột
+   `leads.deleted_at` và chỉ mục `idx_leads_active_created`. Nếu thiếu một trong
+   hai, chạy một lần migration
+   `packages/api/sql/migrations/003_lead_soft_delete.sql`. Không chạy lại
+   migration sau khi đã áp dụng.
 
-## 2. Configure the database connection
+## 2. Cấu hình kết nối cơ sở dữ liệu
 
-From the repository root, copy `.env.example` to `.env` and set the database
-host, port, username, password and database name to match your local MySQL
-configuration:
+Tại thư mục gốc của repository, sao chép `.env.example` thành `.env` và thiết
+lập máy chủ, cổng, tên người dùng, mật khẩu và tên cơ sở dữ liệu cho phù hợp với
+cấu hình MySQL trên máy của bạn:
 
 ```powershell
 Copy-Item .env.example .env
 ```
 
-The default database name is `nexus_crm`. Keep `.env` on your computer; do not
-commit it or share its credentials.
+Tên cơ sở dữ liệu mặc định là `nexus_crm`. Giữ file `.env` trên máy của bạn;
+không commit file này hoặc chia sẻ thông tin đăng nhập trong đó.
 
-## 3. Install Python dependencies
+## 3. Cài đặt thư viện Python
 
-Run these commands from the repository root:
+Chạy các lệnh sau tại thư mục gốc của repository:
 
 ```powershell
 py -3 -m venv .venv
@@ -46,26 +46,26 @@ py -3 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-If `py -3` is not available, replace it with `python`:
+Nếu máy không có lệnh `py -3`, hãy thay bằng `python`:
 
 ```powershell
 python -m venv .venv
 ```
 
-## 4. Start the application
+## 4. Khởi chạy ứng dụng
 
-From the repository root, run:
+Tại thư mục gốc của repository, chạy:
 
 ```powershell
 .\.venv\Scripts\python.exe packages\api\app.py
 ```
 
-Keep the terminal open while using the app. Open
-<http://127.0.0.1:3001> in your browser. Press `Ctrl+C` in the terminal to stop
-the server.
+Giữ cửa sổ terminal mở trong khi sử dụng ứng dụng. Truy cập
+<http://127.0.0.1:3001> bằng trình duyệt. Nhấn `Ctrl+C` trong terminal để dừng
+máy chủ.
 
-In development mode, the server creates these demo accounts if they do not
-already exist:
+Ở chế độ development, khi khởi động máy chủ sẽ tạo các tài khoản demo sau nếu
+chúng chưa tồn tại:
 
 | Role | Email | Password |
 | --- | --- | --- |
@@ -73,16 +73,16 @@ already exist:
 | Manager | `manager@nexus.local` | `Manager123!` |
 | Sale | `sale@nexus.local` | `Sale123!` |
 
-Password reset links are written to the development mailbox table. Real email
-delivery is not configured.
+Liên kết đặt lại mật khẩu được lưu vào bảng hộp thư development. Chức năng gửi
+email thật chưa được cấu hình.
 
-## Tests
+## Kiểm thử
 
-Run the Python unit tests from the repository root:
+Chạy unit test Python tại thư mục gốc của repository:
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s packages\api -p "test_*.py"
 ```
 
-These tests use mocks for database-backed behavior and do not clear application
-data.
+Các bài kiểm thử sử dụng mock cho những phần cần cơ sở dữ liệu và không xóa dữ
+liệu ứng dụng.

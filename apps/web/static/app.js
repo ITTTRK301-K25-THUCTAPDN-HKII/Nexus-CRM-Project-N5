@@ -17,6 +17,10 @@ const state = {
   converting: null,
   accountName: '',
   detail: null,
+  dealHistoryId: null,
+  dealHistory: [],
+  dealHistoryLoading: false,
+  dealHistoryError: '',
   mailbox: [],
   loginBusy: false,
 };
@@ -201,9 +205,34 @@ function accountDetailPage() {
     <section class="customer-detail-grid"><article class="table-card detail-section"><div class="detail-section-heading"><div class="icon-tile small-tile">♙</div><div><strong>Người liên hệ</strong><span>${contacts.length} liên hệ</span></div></div>
     ${contacts.length ? `<div class="related-list">${contacts.map((c) => `<div class="related-item"><div class="avatar">${initials(c.firstName)}</div><div class="related-main"><strong>${escapeHtml(c.firstName)} ${escapeHtml(c.lastName)}</strong><span>${escapeHtml(c.jobTitle || 'Chưa có chức vụ')}</span><small>${escapeHtml(c.email || c.phone || 'Chưa có thông tin liên hệ')}</small></div></div>`).join('')}</div>` : '<p class="empty-state">Chưa có người liên hệ.</p>'}</article>
     <article class="table-card detail-section"><div class="detail-section-heading"><div class="icon-tile small-tile">◇</div><div><strong>Cơ hội kinh doanh</strong><span>${deals.length} cơ hội gần đây</span></div></div>
-    ${deals.length ? `<div class="related-list">${deals.map((d) => `<div class="related-item deal-item"><div class="related-main"><strong>${escapeHtml(d.name)}</strong><span>${escapeHtml(d.stage)} · ${escapeHtml(d.probability)}%</span></div><strong>${escapeHtml(d.currency)} ${Number(d.amount).toLocaleString('vi-VN')}</strong></div>`).join('')}</div>` : '<p class="empty-state">Chưa có cơ hội kinh doanh.</p>'}</article>
+    ${deals.length ? `<div class="related-list">${deals.map((d) => `<div class="related-item deal-item"><div class="related-main"><strong>${escapeHtml(d.name)}</strong><span>${escapeHtml(d.stage)} · ${escapeHtml(d.probability)}%</span><button class="text-button" data-action="deal-history" data-id="${d.id}">${String(state.dealHistoryId) === String(d.id) ? 'Ẩn lịch sử' : 'Xem lịch sử'}</button></div><strong>${escapeHtml(d.currency)} ${Number(d.amount).toLocaleString('vi-VN')}</strong></div>`).join('')}</div>
+    ${String(state.dealHistoryId) && deals.some((d) => String(d.id) === String(state.dealHistoryId)) ? dealHistoryTimeline() : ''}` : '<p class="empty-state">Chưa có cơ hội kinh doanh.</p>'}</article>
     <article class="table-card detail-section activity-section"><div class="detail-section-heading"><div class="icon-tile small-tile">◷</div><div><strong>Lịch sử tương tác</strong><span>${activities.length} hoạt động gần đây</span></div></div>
     ${activities.length ? `<div class="timeline">${activities.map((a) => `<div class="timeline-item"><span class="timeline-dot"></span><div><strong>${escapeHtml(a.subject)}</strong><span>${escapeHtml(a.type)} · ${escapeHtml(new Date(a.occurredAt).toLocaleString('vi-VN'))}</span>${a.details ? `<p>${escapeHtml(a.details)}</p>` : ''}</div></div>`).join('')}</div>` : '<p class="empty-state">Chưa có lịch sử tương tác.</p>'}</article></section></main></div>`;
+}
+function dealHistoryTimeline() {
+  if (state.dealHistoryLoading) return '<div class="loading-screen customer-loading">Đang tải lịch sử Deal...</div>';
+  if (state.dealHistoryError) return alertBox(state.dealHistoryError);
+  if (!state.dealHistory.length) return '<p class="empty-state">Deal chưa có lịch sử thay đổi.</p>';
+  const stageNames = {
+    PROSPECTING: 'Tìm kiếm', QUALIFICATION: 'Đánh giá', PROPOSAL: 'Đề xuất',
+    NEGOTIATION: 'Đàm phán', WON: 'Thành công', LOST: 'Thất bại',
+  };
+  return `<div class="timeline deal-history-timeline">${state.dealHistory.map((entry) => {
+    const changes = [];
+    if (entry.previousStage !== entry.newStage && entry.newStage) {
+      changes.push(entry.previousStage
+        ? `Giai đoạn: ${stageNames[entry.previousStage] || entry.previousStage} → ${stageNames[entry.newStage] || entry.newStage}`
+        : `Deal được tạo ở giai đoạn ${stageNames[entry.newStage] || entry.newStage}`);
+    }
+    if (entry.previousAmount !== entry.newAmount && entry.newAmount !== null) {
+      const previous = entry.previousAmount === null ? '' : `${Number(entry.previousAmount).toLocaleString('vi-VN')} → `;
+      changes.push(`Giá trị: ${previous}${Number(entry.newAmount).toLocaleString('vi-VN')}`);
+    }
+    return `<div class="timeline-item"><span class="timeline-dot"></span><div><strong>${escapeHtml(changes.join(' · ') || entry.note || 'Cập nhật Deal')}</strong>
+      <span>${escapeHtml(entry.changedByName || 'Người dùng không xác định')} · ${escapeHtml(new Date(entry.changedAt).toLocaleString('vi-VN'))}</span>
+      ${entry.note ? `<p>${escapeHtml(entry.note)}</p>` : ''}</div></div>`;
+  }).join('')}</div>`;
 }
 async function loadCustomers() {
   const key = `${state.customerView}|${state.customerPage}|${state.customerSearch}|${state.customerStatus}`;
@@ -343,6 +372,29 @@ root.addEventListener('click', async (event) => {
       state.converting = state.customerItems.find((item) => item.id === id) || null;
       state.accountName = state.converting?.company || state.converting?.name || '';
       state.error = ''; render(); break;
+    case 'deal-history':
+      if (String(state.dealHistoryId) === String(id)) {
+        state.dealHistoryId = null;
+        state.dealHistory = [];
+        state.dealHistoryError = '';
+        render();
+        break;
+      }
+      state.dealHistoryId = id;
+      state.dealHistory = [];
+      state.dealHistoryLoading = true;
+      state.dealHistoryError = '';
+      render();
+      try {
+        const result = await api(`/deals/${id}/history`);
+        if (String(state.dealHistoryId) === String(id)) state.dealHistory = result.history;
+      } catch (error) {
+        state.dealHistoryError = error.message;
+      } finally {
+        state.dealHistoryLoading = false;
+        if (route().startsWith('/customers/accounts/')) render();
+      }
+      break;
     case 'close-convert': state.converting = null; state.error = ''; render(); break;
     case 'page-prev':
       if (state.customerPage > 1) { state.customerPage -= 1; customerRequest = ''; render(); }
