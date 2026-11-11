@@ -324,6 +324,7 @@ function render() {
       unmountDealBoard = window.mountDealBoard(document.getElementById('deal-board-root'), {
         deals: state.deals,
         onStageChange: updateDealStage,
+        onHistory: async (deal) => (await api(`/deals/${encodeURIComponent(deal.id)}/history`)).history,
       });
     }
     if (!state.dealsLoaded) void loadDeals();

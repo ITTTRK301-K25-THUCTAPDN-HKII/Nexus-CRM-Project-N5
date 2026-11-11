@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { DndContext, KeyboardSensor, MouseSensor, TouchSensor, useDraggable, useDroppable, useSensor, useSensors } from '@dnd-kit/core';
 
@@ -9,6 +9,14 @@ const COLUMNS = [
   { id: 'WON', title: 'Thành công' },
   { id: 'LOST', title: 'Thất bại' },
 ];
+const STAGE_NAMES = {
+  PROSPECTING: 'Tìm kiếm',
+  QUALIFICATION: 'Đánh giá',
+  PROPOSAL: 'Đề xuất',
+  NEGOTIATION: 'Đàm phán',
+  WON: 'Thành công',
+  LOST: 'Thất bại',
+};
 
 // Quy đổi tên stage cũ trong database về cột LEAD trên màn hình.
 function getBoardStage(stage) {
@@ -32,11 +40,16 @@ function DealColumn({ column, deals, children }) {
 }
 
 // Component board quản lý dữ liệu cục bộ để card đổi cột ngay khi thả.
-function DealBoard({ deals: initialDeals, onStageChange }) {
+function DealBoard({ deals: initialDeals, onStageChange, onHistory }) {
   const [deals, setDeals] = useState(initialDeals);
   const [toast, setToast] = useState(null);
   const [pendingMove, setPendingMove] = useState(null);
   const [savingMove, setSavingMove] = useState(false);
+  const [historyDeal, setHistoryDeal] = useState(null);
+  const [historyEntries, setHistoryEntries] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState('');
+  const historyRequest = useRef(0);
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 150, tolerance: 6 } }),
@@ -91,6 +104,28 @@ function DealBoard({ deals: initialDeals, onStageChange }) {
     setSavingMove(false);
   }
 
+  async function openHistory(deal) {
+    const requestId = ++historyRequest.current;
+    setHistoryDeal(deal);
+    setHistoryEntries([]);
+    setHistoryError('');
+    setHistoryLoading(true);
+    try {
+      const entries = await onHistory(deal);
+      if (requestId === historyRequest.current) setHistoryEntries(entries);
+    } catch (error) {
+      if (requestId === historyRequest.current) setHistoryError(error.message || 'Không thể tải lịch sử Deal.');
+    } finally {
+      if (requestId === historyRequest.current) setHistoryLoading(false);
+    }
+  }
+
+  function closeHistory() {
+    historyRequest.current += 1;
+    setHistoryDeal(null);
+    setHistoryLoading(false);
+  }
+
   // Khi thả vào cột đóng Deal, mở form xác nhận thay vì lưu stage ngay.
   function handleDragEnd(event) {
     const { active, over } = event;
@@ -129,6 +164,40 @@ function DealBoard({ deals: initialDeals, onStageChange }) {
       </>}
       <div className="deal-modal-actions"><button type="button" className="secondary-button" onClick={() => setPendingMove(null)}>Hủy</button><button type="submit" className="primary-button compact">{pendingMove.stage === 'LOST' ? 'Xác nhận LOST' : 'Xác nhận WON'}</button></div>
     </form></div>}
+    {historyDeal && <div className="deal-modal-backdrop" onClick={(event) => {
+      if (event.target === event.currentTarget) closeHistory();
+    }}>
+      <section className="deal-confirm-modal deal-history-modal" role="dialog" aria-modal="true" aria-labelledby="deal-history-title">
+        <button type="button" className="deal-modal-close" aria-label="Đóng lịch sử" onClick={closeHistory}>×</button>
+        <span className="eyebrow">THEO DÕI THAY ĐỔI</span>
+        <h2 id="deal-history-title">Lịch sử Deal</h2>
+        <p className="muted">{historyDeal.name}</p>
+        {historyLoading ? <p className="empty-state">Đang tải lịch sử Deal...</p>
+          : historyError ? <p className="alert error" role="alert">{historyError}</p>
+            : historyEntries.length ? <div className="timeline deal-history-timeline">
+              {historyEntries.map((entry) => {
+                const amountChanged = entry.previousAmount !== null
+                  && entry.newAmount !== null
+                  && Number(entry.previousAmount) !== Number(entry.newAmount);
+                return <div className="timeline-item" key={entry.id}>
+                  <span className="timeline-dot" />
+                  <div>
+                  <strong>{entry.previousStage && entry.previousStage !== entry.newStage
+                    ? `${STAGE_NAMES[entry.previousStage] || entry.previousStage} → ${STAGE_NAMES[entry.newStage] || entry.newStage}`
+                    : entry.previousStage
+                      ? amountChanged ? 'Cập nhật giá trị Deal' : entry.note || 'Deal được cập nhật'
+                      : `Deal được tạo ở giai đoạn ${STAGE_NAMES[entry.newStage] || entry.newStage || 'không xác định'}`}</strong>
+                  <span>{entry.changedByName || 'Người dùng không xác định'} · {entry.changedAt ? new Date(entry.changedAt).toLocaleString('vi-VN') : ''}</span>
+                  {amountChanged && !entry.note
+                    ? <span>Giá trị: {Number(entry.previousAmount).toLocaleString('vi-VN')} → {Number(entry.newAmount).toLocaleString('vi-VN')}</span>
+                    : null}
+                  {entry.note ? <p>{entry.note}</p> : null}
+                  </div>
+                </div>;
+              })}
+            </div> : <p className="empty-state">Deal chưa có lịch sử thay đổi.</p>}
+      </section>
+    </div>}
     <div className="deal-board" aria-label="Bảng Deal gồm năm trạng thái">
       {COLUMNS.map((column) => {
         const columnDeals = deals.filter((deal) => getBoardStage(deal.stage) === column.id);
@@ -140,6 +209,10 @@ function DealBoard({ deals: initialDeals, onStageChange }) {
               <div className="deal-amount"><span className="deal-field-label">{deal.stage === 'WON' ? 'GIÁ TRỊ HỢP ĐỒNG' : 'GIÁ TRỊ DEAL'}</span><strong>{Number(deal.closedAmount ?? deal.amount ?? 0).toLocaleString('vi-VN')} {deal.currency || 'VND'}</strong></div>
               <span className={`deal-date-badge ${deal.expectedCloseDate ? 'date-upcoming' : 'date-empty'}`}>{deal.expectedCloseDate ? `Chốt: ${new Date(`${String(deal.expectedCloseDate).slice(0, 10)}T00:00:00`).toLocaleDateString('vi-VN')}` : 'Chưa có ngày chốt'}</span>
               <div className="deal-owner"><span className="avatar deal-avatar" aria-hidden="true">{(deal.ownerName || '?').split(/\s+/).filter(Boolean).slice(-2).map((part) => part[0]).join('').toUpperCase()}</span><span><small>Phụ trách</small><strong>{deal.ownerName || 'Chưa phân công'}</strong></span></div>
+              <button type="button" className="text-button deal-history-button" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => {
+                event.stopPropagation();
+                void openHistory(deal);
+              }}>Xem lịch sử</button>
             </article>
           </DraggableDeal>)}
         </DealColumn>;
