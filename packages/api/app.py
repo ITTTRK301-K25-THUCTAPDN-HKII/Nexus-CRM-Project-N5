@@ -346,7 +346,7 @@ def deal_scope(user, column="owner_user_id"):
 def deal_payload(data, partial=False):
     allowed = {
         "accountId", "contactId", "ownerUserId", "name", "amount", "currency",
-        "stage", "probability", "expectedCloseDate",
+        "stage", "probability", "expectedCloseDate", "expectedVersion",
     }
     if any(field not in allowed for field in data):
         raise ValueError("Dữ liệu Deal chứa trường không hợp lệ.")
@@ -354,6 +354,11 @@ def deal_payload(data, partial=False):
         raise ValueError("Deal cần có Account và tên.")
 
     result = {}
+    if "expectedVersion" in data:
+        version = data["expectedVersion"]
+        if isinstance(version, bool) or not isinstance(version, int) or version < 1:
+            raise ValueError("Phiên bản Deal không hợp lệ.")
+        result["expectedVersion"] = version
     if "accountId" in data or not partial:
         result["accountId"] = positive_id(data.get("accountId"))
     if "contactId" in data:
@@ -623,6 +628,9 @@ def deal_update(deal_id):
         data = deal_payload(body_object(), partial=True)
     except ValueError as error:
         return validation_error([("body", str(error))])
+    expected_version = data.pop("expectedVersion", None)
+    if expected_version is None:
+        return json_error("Cần gửi expectedVersion hiện tại của Deal.", 400)
     if not data:
         return json_error("Cần cung cấp ít nhất một trường để cập nhật.", 400)
     if "stage" in data:
@@ -635,13 +643,15 @@ def deal_update(deal_id):
         where = "id=%s" + (f" AND {scope}" if scope else "")
         cursor.execute(
             "SELECT id,account_id AS accountId,contact_id AS contactId,owner_user_id AS ownerUserId,"
-            "name,amount,currency,stage,probability,expected_close_date AS expectedCloseDate "
+            "name,amount,currency,stage,probability,expected_close_date AS expectedCloseDate,version "
             "FROM deals WHERE " + where + " FOR UPDATE",
             tuple([parsed_id] + scope_values),
         )
         existing = cursor.fetchone()
         if not existing:
-            return None
+            return "not_found"
+        if existing["version"] != expected_version:
+            return "conflict"
 
         updated = dict(existing)
         updated.update(data)
@@ -663,9 +673,11 @@ def deal_update(deal_id):
         }
         assignments = [f"{columns[field]}=%s" for field in data]
         cursor.execute(
-            "UPDATE deals SET " + ",".join(assignments) + ",version=version+1 WHERE id=%s",
-            tuple(list(data.values()) + [parsed_id]),
+            "UPDATE deals SET " + ",".join(assignments) + ",version=version+1 WHERE id=%s AND version=%s",
+            tuple(list(data.values()) + [parsed_id, expected_version]),
         )
+        if cursor.rowcount != 1:
+            return "conflict"
 
         amount_changed = Decimal(str(updated["amount"])) != Decimal(str(existing["amount"]))
         if amount_changed:
@@ -684,8 +696,10 @@ def deal_update(deal_id):
         result_id = transaction(update)
     except LookupError as error:
         return json_error(str(error), 404)
-    if result_id is None:
+    if result_id == "not_found":
         return json_error("Không tìm thấy Deal.", 404)
+    if result_id == "conflict":
+        return json_error("Deal đã được cập nhật ở một phiên khác. Hãy tải lại dữ liệu rồi thử lại.", 409)
     deal = query(deal_select(" WHERE d.id=%s"), (result_id,))[0]
     return jsonify({"deal": deal})
 
