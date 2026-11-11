@@ -753,12 +753,12 @@ def deal_history(deal_id):
     return jsonify({"history": history})
 
 
-@app.patch("/api/deals/<deal_id>/stage")
+@app.patch("/api/deals/<id>/stage")
 @auth_required
-def deal_stage_update(deal_id):
+def deal_stage_update(id):
     """Đổi stage trong transaction, kiểm tra phạm vi quyền và ghi DealHistory."""
     try:
-        parsed_id = positive_id(deal_id)
+        parsed_id = positive_id(id)
         data = body_object()
         stage = data.get("stage")
         expected_stage = data.get("expectedStage")
