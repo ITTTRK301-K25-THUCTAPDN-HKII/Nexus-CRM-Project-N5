@@ -261,6 +261,17 @@ td { padding: 13px 17px; border-top: 1px solid #f0f2f6; color: #58667c; font-siz
 .deal-toast-mark { width: 20px; height: 20px; flex: 0 0 20px; display: grid; place-items: center; border-radius: 50%; background: #fbe9e9; color: #a33e43; font-weight: 800; }
 .deal-toast > span:nth-child(2) { flex: 1; }
 .deal-toast button { border: 0; background: transparent; color: #8f5a5d; font-size: 18px; line-height: 1; cursor: pointer; }
+.deal-modal-backdrop { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 20px; background: #17243b75; }
+.deal-confirm-modal { position: relative; display: grid; gap: 12px; width: min(100%, 440px); padding: 25px; border: 1px solid #e2e7ef; border-radius: 12px; background: #fff; }
+.deal-confirm-modal h2 { margin: 0; color: #263550; font-size: 19px; }
+.deal-confirm-modal > p { margin: 0; }
+.deal-modal-close { position: absolute; top: 14px; right: 15px; border: 0; background: transparent; color: #758198; font-size: 22px; cursor: pointer; }
+.deal-modal-field { display: grid; gap: 6px; color: #45536b; font-size: 11px; font-weight: 600; }
+.deal-modal-field input, .deal-modal-field textarea { width: 100%; min-height: 38px; padding: 9px 10px; border: 1px solid #dfe5ef; border-radius: 7px; outline: 0; color: #34435d; background: #fff; font: inherit; }
+.deal-modal-field textarea { resize: vertical; }
+.deal-modal-field input:focus, .deal-modal-field textarea:focus { border-color: #6984e8; }
+.deal-modal-hint { color: #78859b; font-size: 11px; }
+.deal-modal-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 5px; }
 
 @media (max-width: 820px) {
   .customer-content { padding: 22px 18px; }

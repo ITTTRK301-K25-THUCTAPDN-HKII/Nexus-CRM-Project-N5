@@ -6,7 +6,7 @@ import threading
 import time
 from datetime import date
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from functools import wraps
 from pathlib import Path
 from urllib.parse import quote
@@ -408,6 +408,7 @@ def deals_list():
     rows = query(
         "SELECT d.id,d.name,d.stage,d.amount,d.currency,d.version,"
         "d.expected_close_date AS expectedCloseDate,"
+        "d.closed_amount AS closedAmount,d.closed_date AS closedDate,d.lost_reason AS lostReason,"
         "a.name AS accountName,u.name AS ownerName "
         "FROM deals d INNER JOIN accounts a ON a.id=d.account_id "
         "INNER JOIN users u ON u.id=d.owner_user_id" +
@@ -429,12 +430,25 @@ def deal_stage_update(deal_id):
         expected_stage = data.get("expectedStage")
         expected_version = data.get("expectedVersion")
         lost_reason = clean_text(data.get("lostReason", ""), "Lý do thất bại", 1000)
+        closed_amount = None
+        closed_date = None
         if stage not in ("PROSPECTING", "PROPOSAL", "NEGOTIATION", "WON", "LOST"):
             raise ValueError("Trạng thái Deal không hợp lệ.")
         if not isinstance(expected_stage, str):
             raise ValueError("Thiếu trạng thái hiện tại của Deal.")
         if not isinstance(expected_version, int) or expected_version < 1:
             raise ValueError("Phiên bản Deal không hợp lệ. Hãy tải lại bảng.")
+        if stage == "WON":
+            try:
+                closed_amount = Decimal(str(data.get("closedAmount", "")))
+            except InvalidOperation as error:
+                raise ValueError("Giá trị hợp đồng thực tế không hợp lệ.") from error
+            if not closed_amount.is_finite() or closed_amount <= 0:
+                raise ValueError("Giá trị hợp đồng thực tế phải lớn hơn 0.")
+            try:
+                closed_date = date.fromisoformat(str(data.get("closedDate", "")))
+            except ValueError as error:
+                raise ValueError("Cần nhập ngày chốt hợp đồng hợp lệ.") from error
     except ValueError as error:
         return json_error(str(error), 400)
 
@@ -462,23 +476,26 @@ def deal_stage_update(deal_id):
             return {"kind": "conflict"}
         if stage not in transitions.get(deal["stage"], set()):
             return {"kind": "invalid_transition"}
-        if stage == "WON" and (Decimal(str(deal["amount"] or 0)) <= 0 or not deal["expectedCloseDate"]):
-            return {"kind": "missing_won_data"}
         if stage == "LOST" and not lost_reason:
             return {"kind": "missing_lost_reason"}
 
         cursor.execute(
-            "UPDATE deals SET stage=%s,version=version+1 WHERE id=%s AND version=%s",
-            (stage, parsed_id, expected_version),
+            "UPDATE deals SET stage=%s,closed_amount=%s,closed_date=%s,lost_reason=%s,version=version+1 "
+            "WHERE id=%s AND version=%s",
+            (stage, closed_amount, closed_date, lost_reason or None, parsed_id, expected_version),
         )
         if cursor.rowcount != 1:
             return {"kind": "conflict"}
         cursor.execute(
             "INSERT INTO deal_history (deal_id,changed_by_user_id,previous_stage,new_stage,previous_amount,new_amount,note) "
             "VALUES (%s,%s,%s,%s,%s,%s,%s)",
-            (parsed_id, g.user["id"], deal["stage"], stage, deal["amount"], deal["amount"], lost_reason or None),
+            (parsed_id, g.user["id"], deal["stage"], stage, deal["amount"], closed_amount or deal["amount"],
+             lost_reason or (f"Hợp đồng thực tế: {closed_amount}; ngày chốt: {closed_date}" if stage == "WON" else None)),
         )
-        return {"kind": "updated", "stage": stage, "version": expected_version + 1}
+        return {
+            "kind": "updated", "stage": stage, "version": expected_version + 1,
+            "closedAmount": closed_amount, "closedDate": closed_date, "lostReason": lost_reason or None,
+        }
 
     result = transaction(change_stage)
     errors = {
@@ -486,13 +503,16 @@ def deal_stage_update(deal_id):
         "forbidden": ("Bạn không có quyền cập nhật Deal này.", 403),
         "conflict": ("Deal đã được người khác cập nhật. Hãy tải lại bảng.", 409),
         "invalid_transition": ("Không thể chuyển Deal từ trạng thái hiện tại sang trạng thái này.", 409),
-        "missing_won_data": ("Deal WON cần có số tiền lớn hơn 0 và ngày chốt.", 409),
         "missing_lost_reason": ("Deal LOST cần có lý do thất bại.", 400),
     }
     if result["kind"] in errors:
         message, status = errors[result["kind"]]
         return json_error(message, status)
-    return jsonify({"id": parsed_id, "stage": result["stage"], "version": result["version"]})
+    return jsonify({
+        "id": parsed_id, "stage": result["stage"], "version": result["version"],
+        "closedAmount": result["closedAmount"], "closedDate": result["closedDate"],
+        "lostReason": result["lostReason"],
+    })
 
 
 @app.post("/api/auth/login")
