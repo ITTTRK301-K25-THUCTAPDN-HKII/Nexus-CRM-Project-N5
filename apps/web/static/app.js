@@ -143,19 +143,15 @@ function dealsPage() {
 }
 
 // Lưu stage mới; khi kéo vào LOST, hỏi lý do để backend có đủ dữ liệu nghiệp vụ.
-async function updateDealStage(deal, boardStage) {
-  let lostReason = '';
-  if (boardStage === 'LOST') {
-    lostReason = window.prompt('Nhập lý do Deal thất bại:')?.trim() || '';
-    if (!lostReason) throw new Error('Đã hủy thao tác hoặc chưa nhập lý do thất bại.');
-  }
+async function updateDealStage(deal, boardStage, details = {}) {
   const databaseStage = boardStage === 'LEAD' ? 'PROSPECTING' : boardStage;
   const result = await api(`/deals/${encodeURIComponent(deal.id)}/stage`, {
     method: 'PATCH',
-    body: JSON.stringify({ stage: databaseStage, expectedStage: deal.stage, expectedVersion: deal.version, lostReason }),
+    body: JSON.stringify({ stage: databaseStage, expectedStage: deal.stage, expectedVersion: deal.version, ...details }),
   });
   // Lưu stage đã được server xác nhận cho lần kéo tiếp theo.
   state.deals = state.deals.map((item) => item.id === deal.id ? { ...item, stage: result.stage, version: result.version } : item);
+  return result;
 }
 function adminPage() {
   const filtered = state.users.filter((user) => `${user.name} ${user.email} ${user.role}`.toLowerCase().includes((state.adminSearch || '').toLowerCase()));

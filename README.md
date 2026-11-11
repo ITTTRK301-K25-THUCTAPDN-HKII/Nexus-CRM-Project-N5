@@ -26,6 +26,10 @@ Node.js and npm are not required to run this version of the project. The Deal bo
    run `packages/api/sql/migrations/004_deal_version.sql` once to enable version
    conflict checks when moving Deal cards. New databases get this column from
    `schema.mysql.sql` automatically.
+5. For an existing database, check that `deals.closed_amount`, `deals.closed_date`
+   and `deals.lost_reason` exist. If missing, run
+   `packages/api/sql/migrations/005_deal_close_fields.sql` once. New databases
+   receive these fields from `schema.mysql.sql`.
 
 ## 2. Configure the database connection
 
