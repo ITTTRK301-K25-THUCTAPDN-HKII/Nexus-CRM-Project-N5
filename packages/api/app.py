@@ -690,6 +690,40 @@ def deal_update(deal_id):
     return jsonify({"deal": deal})
 
 
+@app.delete("/api/deals/<deal_id>")
+@auth_required
+def deal_delete(deal_id):
+    """Xóa Deal trong phạm vi vai trò; giữ Deal đang được Quote tham chiếu."""
+    try:
+        parsed_id = positive_id(deal_id)
+    except ValueError as error:
+        return json_error(str(error), 400)
+
+    def delete(cursor):
+        scope, values = deal_scope(g.user)
+        where = "id=%s" + (f" AND {scope}" if scope else "")
+        cursor.execute(
+            "SELECT id FROM deals WHERE " + where + " FOR UPDATE",
+            tuple([parsed_id] + values),
+        )
+        if not cursor.fetchone():
+            return "not_found"
+
+        cursor.execute("SELECT id FROM quotes WHERE deal_id=%s LIMIT 1", (parsed_id,))
+        if cursor.fetchone():
+            return "has_quotes"
+
+        cursor.execute("DELETE FROM deals WHERE id=%s", (parsed_id,))
+        return "deleted"
+
+    result = transaction(delete)
+    if result == "not_found":
+        return json_error("Không tìm thấy Deal hoặc bạn không có quyền xóa.", 404)
+    if result == "has_quotes":
+        return json_error("Không thể xóa Deal đã có Báo giá liên kết.", 409)
+    return "", 204
+
+
 @app.get("/api/deals/<deal_id>/history")
 @auth_required
 def deal_history(deal_id):
