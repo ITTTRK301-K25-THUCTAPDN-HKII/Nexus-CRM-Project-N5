@@ -1509,6 +1509,45 @@ def convert_lead(lead_id):
     return jsonify({"accountId": result["accountId"], "contactId": result["contactId"], "message": "Đã chuyển đổi lead thành khách hàng."}), 201
 
 
+@app.post("/api/activities")
+@auth_required
+def activity_create():
+    """Ghi nhận một lần tương tác với Lead, Account hoặc Contact."""
+    try:
+        data = body_object()
+        activity_type = data.get("type", data.get("activity_type"))
+        if activity_type not in ("CALL", "EMAIL", "MEETING", "NOTE"):
+            raise ValueError("Loại tương tác phải là CALL, EMAIL, MEETING hoặc NOTE.")
+        content = clean_text(data.get("content"), "Nội dung", 5000, True, 1)
+        customer_id = positive_id(data.get("customer_id", data.get("customerId")))
+        customer_type = data.get("customer_type", data.get("customerType"))
+        entity_by_type = {"LEAD": "leads", "ACCOUNT": "accounts", "CONTACT": "contacts"}
+        entity = entity_by_type.get(str(customer_type).upper())
+        if not entity:
+            raise ValueError("customer_type phải là LEAD, ACCOUNT hoặc CONTACT.")
+        subject = clean_text(data.get("subject", activity_type.title()), "Tiêu đề", 180, True, 1)
+    except ValueError as error:
+        return validation_error([("body", str(error))])
+
+    if not can_access_customer(g.user, entity, customer_id):
+        return json_error("Không tìm thấy khách hàng hoặc bạn không có quyền ghi tương tác.", 404)
+
+    foreign_keys = {"leads": (customer_id, None, None), "accounts": (None, customer_id, None), "contacts": (None, None, customer_id)}
+    lead_id, account_id, contact_id = foreign_keys[entity]
+    activity_id, _ = execute(
+        "INSERT INTO activities (user_id,lead_id,account_id,contact_id,activity_type,subject,details) "
+        "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+        (g.user["id"], lead_id, account_id, contact_id, activity_type, subject, content),
+    )
+    rows = query(
+        "SELECT id,user_id AS userId,lead_id AS leadId,account_id AS accountId,contact_id AS contactId,"
+        "activity_type AS type,subject,details AS content,occurred_at AS occurredAt "
+        "FROM activities WHERE id=%s",
+        (activity_id,),
+    )
+    return jsonify({"activity": rows[0]}), 201
+
+
 @app.get("/api/accounts")
 @auth_required
 def accounts_list():
