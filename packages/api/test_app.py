@@ -167,7 +167,10 @@ class FlaskAppTests(unittest.TestCase):
     def test_sale_cannot_transfer_deal_and_stage_changes_use_dedicated_route(self):
         sale = self.authenticated_client("Sale", 8)
         with patch.object(api, "query", return_value=[sale]):
-            transfer = self.client.patch("/api/deals/41", json={"ownerUserId": 10})
+            transfer = self.client.patch(
+                "/api/deals/41",
+                json={"ownerUserId": 10, "expectedVersion": 1},
+            )
         self.assertEqual(transfer.status_code, 403)
 
         with patch.object(api, "query", return_value=[sale]):

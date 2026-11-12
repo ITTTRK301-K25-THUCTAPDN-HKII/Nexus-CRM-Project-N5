@@ -1,3 +1,4 @@
+import calendar
 import hashlib
 import os
 import re
@@ -464,6 +465,138 @@ def task_select(where=""):
     )
 
 
+APPOINTMENT_TIMEZONE = timezone(timedelta(hours=7))
+
+
+def appointment_datetime(value, field):
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{field} không hợp lệ.")
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError as error:
+        raise ValueError(f"{field} cần theo định dạng ISO 8601.") from error
+    if parsed.tzinfo:
+        parsed = parsed.astimezone(APPOINTMENT_TIMEZONE).replace(tzinfo=None)
+    return parsed
+
+
+def appointment_payload(data, partial=False):
+    allowed = {
+        "title", "description", "location", "startsAt", "endsAt", "status",
+        "leadId", "accountId", "contactId", "dealId", "recurrenceFrequency",
+        "recurrenceUntil",
+    }
+    if any(field not in allowed for field in data):
+        raise ValueError("Dữ liệu lịch hẹn chứa trường không hợp lệ.")
+    if not partial and not {"title", "startsAt", "endsAt"}.issubset(data):
+        raise ValueError("Lịch hẹn cần có tiêu đề, thời gian bắt đầu và kết thúc.")
+
+    result = {}
+    if "title" in data or not partial:
+        result["title"] = clean_text(data.get("title"), "Tiêu đề", 180, True, 2)
+    if "description" in data:
+        result["description"] = clean_text(data["description"], "Mô tả", 5000) or None
+    if "location" in data:
+        result["location"] = clean_text(data["location"], "Địa điểm", 255) or None
+    for field in ("startsAt", "endsAt"):
+        if field in data:
+            result[field] = appointment_datetime(data[field], "Thời gian bắt đầu" if field == "startsAt" else "Thời gian kết thúc")
+    for field in ("leadId", "accountId", "contactId", "dealId"):
+        if field in data:
+            result[field] = None if data[field] in (None, "") else positive_id(data[field])
+    if "status" in data:
+        if data["status"] not in ("SCHEDULED", "COMPLETED", "CANCELLED"):
+            raise ValueError("Trạng thái lịch hẹn không hợp lệ.")
+        result["status"] = data["status"]
+    if "recurrenceFrequency" in data:
+        if data["recurrenceFrequency"] not in ("WEEKLY", "MONTHLY"):
+            raise ValueError("Chu kỳ lặp phải là WEEKLY hoặc MONTHLY.")
+        result["recurrenceFrequency"] = data["recurrenceFrequency"]
+    if "recurrenceUntil" in data:
+        value = data["recurrenceUntil"]
+        if value in (None, ""):
+            result["recurrenceUntil"] = None
+        elif not isinstance(value, str):
+            raise ValueError("Ngày kết thúc lặp không hợp lệ.")
+        else:
+            try:
+                result["recurrenceUntil"] = date.fromisoformat(value)
+            except ValueError as error:
+                raise ValueError("Ngày kết thúc lặp cần theo định dạng YYYY-MM-DD.") from error
+    if partial and ("recurrenceFrequency" in result or "recurrenceUntil" in result):
+        raise ValueError("Không thể đổi chu kỳ lặp trên một lịch hẹn đã tạo.")
+    if "startsAt" in result and "endsAt" in result and result["endsAt"] <= result["startsAt"]:
+        raise ValueError("Thời gian kết thúc phải sau thời gian bắt đầu.")
+    return result
+
+
+def next_appointment_start(value, frequency, anchor_day=None):
+    if frequency == "WEEKLY":
+        return value + timedelta(days=7)
+    month_index = value.year * 12 + value.month
+    next_year, month_zero = divmod(month_index, 12)
+    next_month = month_zero + 1
+    day = min(anchor_day or value.day, calendar.monthrange(next_year, next_month)[1])
+    return value.replace(year=next_year, month=next_month, day=day)
+
+
+def appointment_scope(user, alias="a"):
+    if user["role"] == "Admin":
+        return "", []
+    if user["role"] == "Manager":
+        return (
+            f"({alias}.organizer_user_id=%s OR {alias}.organizer_user_id "
+            "IN (SELECT id FROM users WHERE role='Sale'))",
+            [user["id"]],
+        )
+    return f"{alias}.organizer_user_id=%s", [user["id"]]
+
+
+def appointment_select(where=""):
+    return (
+        "SELECT a.id,a.organizer_user_id AS organizerId,u.name AS organizerName,"
+        "a.recurrence_series_id AS recurrenceSeriesId,a.lead_id AS leadId,"
+        "a.account_id AS accountId,a.contact_id AS contactId,a.deal_id AS dealId,"
+        "a.title,a.description,a.location,a.starts_at AS startsAt,a.ends_at AS endsAt,"
+        "a.status,s.recurrence_frequency AS recurrenceFrequency,"
+        "s.recurrence_until AS recurrenceUntil,a.created_at AS createdAt "
+        "FROM appointments a INNER JOIN users u ON u.id=a.organizer_user_id "
+        "LEFT JOIN appointment_series s ON s.id=a.recurrence_series_id" + where
+    )
+
+
+def validate_appointment_relations(cursor, data, user):
+    linked = [(field, table) for field, table in (
+        ("leadId", "leads"), ("accountId", "accounts"),
+        ("contactId", "contacts"), ("dealId", "deals"),
+    ) if data.get(field) is not None]
+    if len(linked) > 1:
+        raise ValueError("Lịch hẹn chỉ được liên kết với một đối tượng khách hàng.")
+    if not linked:
+        return
+    field, table = linked[0]
+    deleted_filter = " AND deleted_at IS NULL" if table == "leads" else ""
+    cursor.execute(
+        f"SELECT owner_user_id AS ownerUserId FROM {table} WHERE id=%s{deleted_filter}",
+        (data[field],),
+    )
+    related = cursor.fetchone()
+    if not related:
+        raise LookupError("Không tìm thấy khách hàng liên kết với lịch hẹn.")
+    if user["role"] == "Admin":
+        return
+    if user["role"] == "Manager":
+        cursor.execute(
+            "SELECT id FROM users WHERE id=%s AND role='Sale'",
+            (related["ownerUserId"],),
+        )
+        if cursor.fetchone():
+            return
+    elif related["ownerUserId"] == user["id"]:
+        return
+    raise LookupError("Bạn không có quyền liên kết lịch hẹn với khách hàng này.")
+
+
 def validate_deal_relations(cursor, deal_data, owner_id):
     account_id = deal_data.get("accountId")
     if account_id is None:
@@ -925,6 +1058,217 @@ def deal_stage_update(id):
         "closedAmount": result["closedAmount"], "closedDate": result["closedDate"],
         "lostReason": result["lostReason"],
     })
+
+
+@app.get("/api/appointments")
+@auth_required
+def appointments_list():
+    page, page_size, offset, _ = page_options()
+    scope, values = appointment_scope(g.user)
+    filters = [scope] if scope else []
+    status = request.args.get("status")
+    if status:
+        if status not in ("SCHEDULED", "COMPLETED", "CANCELLED"):
+            return json_error("Trạng thái lịch hẹn không hợp lệ.", 400)
+        filters.append("a.status=%s")
+        values.append(status)
+    for parameter, operator in (("from", ">="), ("to", "<")):
+        value = request.args.get(parameter)
+        if value:
+            try:
+                date_value = date.fromisoformat(value)
+            except ValueError:
+                return json_error(f"Tham số {parameter} cần theo định dạng YYYY-MM-DD.", 400)
+            if parameter == "to":
+                date_value += timedelta(days=1)
+            filters.append(f"a.starts_at {operator} %s")
+            values.append(date_value)
+    where = " WHERE " + " AND ".join(filters) if filters else ""
+    appointments = query(
+        appointment_select(where) + " ORDER BY a.starts_at,a.id LIMIT %s OFFSET %s",
+        tuple(values + [page_size, offset]),
+    )
+    count = query(
+        "SELECT COUNT(*) AS total FROM appointments a" + where,
+        tuple(values),
+    )
+    return jsonify({
+        "appointments": appointments,
+        "page": page,
+        "pageSize": page_size,
+        "total": count[0]["total"],
+    })
+
+
+@app.post("/api/appointments")
+@auth_required
+def appointment_create():
+    try:
+        data = appointment_payload(body_object())
+    except ValueError as error:
+        return validation_error([("body", str(error))])
+    frequency = data.pop("recurrenceFrequency", None)
+    recurrence_until = data.pop("recurrenceUntil", None)
+    if recurrence_until and not frequency:
+        return validation_error([("recurrenceUntil", "Cần chọn chu kỳ lặp khi đặt ngày kết thúc.")])
+    if frequency and data.get("status", "SCHEDULED") != "SCHEDULED":
+        return validation_error([("status", "Lịch hẹn định kỳ cần bắt đầu ở trạng thái SCHEDULED.")])
+    if frequency and recurrence_until and recurrence_until < data["startsAt"].date():
+        return validation_error([("recurrenceUntil", "Ngày kết thúc lặp không được trước ngày bắt đầu.")])
+
+    def create(cursor):
+        validate_appointment_relations(cursor, data, g.user)
+        series_id = None
+        if frequency:
+            next_start = next_appointment_start(data["startsAt"], frequency)
+            active = not recurrence_until or next_start.date() <= recurrence_until
+            cursor.execute(
+                "INSERT INTO appointment_series "
+                "(organizer_user_id,lead_id,account_id,contact_id,deal_id,title,description,location,"
+                "starts_at,ends_at,recurrence_frequency,recurrence_until,next_starts_at,is_active) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (
+                    g.user["id"], data.get("leadId"), data.get("accountId"), data.get("contactId"),
+                    data.get("dealId"), data["title"], data.get("description"), data.get("location"),
+                    data["startsAt"], data["endsAt"], frequency, recurrence_until, next_start, active,
+                ),
+            )
+            series_id = cursor.lastrowid
+        cursor.execute(
+            "INSERT INTO appointments "
+            "(organizer_user_id,recurrence_series_id,lead_id,account_id,contact_id,deal_id,"
+            "title,description,location,starts_at,ends_at,status) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (
+                g.user["id"], series_id, data.get("leadId"), data.get("accountId"),
+                data.get("contactId"), data.get("dealId"), data["title"],
+                data.get("description"), data.get("location"), data["startsAt"],
+                data["endsAt"], data.get("status", "SCHEDULED"),
+            ),
+        )
+        return cursor.lastrowid, series_id
+
+    try:
+        appointment_id, series_id = transaction(create)
+    except (LookupError, ValueError) as error:
+        return json_error(str(error), 404 if isinstance(error, LookupError) else 400)
+    result = query(appointment_select(" WHERE a.id=%s"), (appointment_id,))
+    return jsonify({"appointment": result[0], "recurrenceSeriesId": series_id}), 201
+
+
+@app.get("/api/appointments/<appointment_id>")
+@auth_required
+def appointment_get(appointment_id):
+    try:
+        parsed_id = positive_id(appointment_id)
+    except ValueError as error:
+        return json_error(str(error), 400)
+    scope, values = appointment_scope(g.user)
+    where = " WHERE a.id=%s" + (f" AND {scope}" if scope else "")
+    appointments = query(appointment_select(where), tuple([parsed_id] + values))
+    if not appointments:
+        return json_error("Không tìm thấy lịch hẹn.", 404)
+    return jsonify({"appointment": appointments[0]})
+
+
+@app.patch("/api/appointments/<appointment_id>")
+@app.put("/api/appointments/<appointment_id>")
+@auth_required
+def appointment_update(appointment_id):
+    try:
+        parsed_id = positive_id(appointment_id)
+        data = appointment_payload(body_object(), partial=True)
+    except ValueError as error:
+        return validation_error([("body", str(error))])
+    if not data:
+        return json_error("Cần cung cấp ít nhất một trường để cập nhật lịch hẹn.", 400)
+
+    def update(cursor):
+        scope, scope_values = appointment_scope(g.user)
+        where = "a.id=%s" + (f" AND {scope}" if scope else "")
+        cursor.execute(
+            "SELECT a.id,a.organizer_user_id,a.lead_id,a.account_id,a.contact_id,a.deal_id,"
+            "a.title,a.description,a.location,a.starts_at,a.ends_at,a.status "
+            "FROM appointments a WHERE " + where + " FOR UPDATE",
+            tuple([parsed_id] + scope_values),
+        )
+        existing = cursor.fetchone()
+        if not existing:
+            return "not_found"
+        merged = {
+            "leadId": existing["lead_id"], "accountId": existing["account_id"],
+            "contactId": existing["contact_id"], "dealId": existing["deal_id"],
+            "startsAt": existing["starts_at"], "endsAt": existing["ends_at"],
+        }
+        merged.update(data)
+        if merged["endsAt"] <= merged["startsAt"]:
+            raise ValueError("Thời gian kết thúc phải sau thời gian bắt đầu.")
+        validate_appointment_relations(cursor, merged, g.user)
+        columns = {
+            "title": "title", "description": "description", "location": "location",
+            "startsAt": "starts_at", "endsAt": "ends_at", "status": "status",
+            "leadId": "lead_id", "accountId": "account_id",
+            "contactId": "contact_id", "dealId": "deal_id",
+        }
+        assignments = [f"{columns[field]}=%s" for field in data]
+        cursor.execute(
+            "UPDATE appointments SET " + ",".join(assignments) + " WHERE id=%s",
+            tuple(list(data.values()) + [parsed_id]),
+        )
+        return "updated"
+
+    try:
+        result = transaction(update)
+    except (LookupError, ValueError) as error:
+        return json_error(str(error), 404 if isinstance(error, LookupError) else 400)
+    if result == "not_found":
+        return json_error("Không tìm thấy lịch hẹn.", 404)
+    return jsonify({"appointment": query(appointment_select(" WHERE a.id=%s"), (parsed_id,))[0]})
+
+
+@app.delete("/api/appointments/<appointment_id>")
+@auth_required
+def appointment_delete(appointment_id):
+    try:
+        parsed_id = positive_id(appointment_id)
+    except ValueError as error:
+        return json_error(str(error), 400)
+    scope, values = appointment_scope(g.user)
+    where = "id=%s" + (f" AND {scope.replace('a.', '')}" if scope else "")
+    _, rowcount = execute("DELETE FROM appointments WHERE " + where, tuple([parsed_id] + values))
+    if not rowcount:
+        return json_error("Không tìm thấy lịch hẹn.", 404)
+    return "", 204
+
+
+@app.delete("/api/appointment-series/<series_id>")
+@auth_required
+def appointment_series_cancel(series_id):
+    try:
+        parsed_id = positive_id(series_id)
+    except ValueError as error:
+        return json_error(str(error), 400)
+
+    def cancel(cursor):
+        scope, scope_values = appointment_scope(g.user, "s")
+        where = "s.id=%s" + (f" AND {scope}" if scope else "")
+        cursor.execute(
+            "SELECT s.id FROM appointment_series s WHERE " + where + " FOR UPDATE",
+            tuple([parsed_id] + scope_values),
+        )
+        if not cursor.fetchone():
+            return False
+        cursor.execute("UPDATE appointment_series SET is_active=FALSE WHERE id=%s", (parsed_id,))
+        cursor.execute(
+            "UPDATE appointments SET status='CANCELLED' "
+            "WHERE recurrence_series_id=%s AND starts_at>=%s AND status='SCHEDULED'",
+            (parsed_id, datetime.now(APPOINTMENT_TIMEZONE).replace(tzinfo=None)),
+        )
+        return True
+
+    if not transaction(cancel):
+        return json_error("Không tìm thấy lịch lặp hoặc bạn không có quyền thao tác.", 404)
+    return "", 204
 
 
 @app.post("/api/auth/login")
