@@ -406,6 +406,64 @@ def deal_payload(data, partial=False):
     return result
 
 
+def task_payload(data, partial=False, user=None):
+    allowed = {"title", "due_date", "priority", "status", "assigned_to"}
+    if any(field not in allowed for field in data):
+        raise ValueError("Dữ liệu Task chứa trường không hợp lệ.")
+    if not partial and "title" not in data:
+        raise ValueError("Task cần có tiêu đề.")
+    result = {}
+    if "title" in data or not partial:
+        result["title"] = clean_text(data.get("title"), "Tiêu đề Task", 180, True, 2)
+    if "due_date" in data:
+        value = data["due_date"]
+        if value in (None, ""):
+            result["due_at"] = None
+        elif not isinstance(value, str):
+            raise ValueError("Ngày đến hạn không hợp lệ.")
+        else:
+            try:
+                parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+                result["due_at"] = parsed.astimezone(timezone.utc).replace(tzinfo=None) if parsed.tzinfo else parsed
+            except ValueError as error:
+                raise ValueError("Ngày đến hạn cần theo định dạng YYYY-MM-DD hoặc ISO 8601.") from error
+    if "priority" in data:
+        if data["priority"] not in ("LOW", "MEDIUM", "HIGH"):
+            raise ValueError("Mức ưu tiên phải là LOW, MEDIUM hoặc HIGH.")
+        result["priority"] = data["priority"]
+    if "status" in data:
+        status_map = {"TODO": "OPEN", "IN_PROGRESS": "IN_PROGRESS", "DONE": "COMPLETED", "CANCELLED": "CANCELLED"}
+        if data["status"] not in status_map:
+            raise ValueError("Trạng thái phải là TODO, IN_PROGRESS, DONE hoặc CANCELLED.")
+        result["status"] = status_map[data["status"]]
+    if "assigned_to" in data:
+        result["assigned_to_user_id"] = positive_id(data["assigned_to"])
+    elif not partial:
+        if user and user["role"] == "Sale":
+            result["assigned_to_user_id"] = user["id"]
+        else:
+            raise ValueError("Cần chỉ định assigned_to cho Task.")
+    return result
+
+
+def task_scope(user):
+    if user["role"] == "Admin":
+        return "", []
+    if user["role"] == "Manager":
+        return "t.assigned_to_user_id IN (SELECT id FROM users WHERE role='Sale')", []
+    return "t.assigned_to_user_id=%s", [user["id"]]
+
+
+def task_select(where=""):
+    return (
+        "SELECT t.id,t.title,t.description,"
+        "CASE t.status WHEN 'OPEN' THEN 'TODO' WHEN 'COMPLETED' THEN 'DONE' ELSE t.status END AS status,"
+        "t.priority,t.due_at AS due_date,t.assigned_to_user_id AS assigned_to,"
+        "u.name AS assignee_name,t.created_by_user_id AS created_by,t.completed_at AS completed_at,t.created_at "
+        "FROM tasks t INNER JOIN users u ON u.id=t.assigned_to_user_id" + where
+    )
+
+
 def validate_deal_relations(cursor, deal_data, owner_id):
     account_id = deal_data.get("accountId")
     if account_id is None:
@@ -1507,6 +1565,89 @@ def convert_lead(lead_id):
     if result["kind"] == "duplicate_account":
         return json_error("Đã tồn tại Account có cùng email hoặc số điện thoại. Hãy kiểm tra và liên kết thủ công trước khi chuyển đổi.", 409, code="DUPLICATE_ACCOUNT")
     return jsonify({"accountId": result["accountId"], "contactId": result["contactId"], "message": "Đã chuyển đổi lead thành khách hàng."}), 201
+
+
+@app.get("/api/tasks")
+@auth_required
+def tasks_list():
+    scope, values = task_scope(g.user)
+    filters = [scope] if scope else []
+    status = request.args.get("status")
+    status_map = {"TODO": "OPEN", "IN_PROGRESS": "IN_PROGRESS", "DONE": "COMPLETED", "CANCELLED": "CANCELLED"}
+    if status:
+        if status not in status_map:
+            return json_error("Trạng thái Task không hợp lệ.", 400)
+        filters.append("t.status=%s")
+        values.append(status_map[status])
+    priority = request.args.get("priority")
+    if priority:
+        if priority not in ("LOW", "MEDIUM", "HIGH"):
+            return json_error("Mức ưu tiên Task không hợp lệ.", 400)
+        filters.append("t.priority=%s")
+        values.append(priority)
+    where = " WHERE " + " AND ".join(filters) if filters else ""
+    tasks = query(task_select(where) + " ORDER BY t.due_at IS NULL,t.due_at,t.id", tuple(values))
+    return jsonify({"tasks": tasks})
+
+
+@app.post("/api/tasks")
+@auth_required
+def task_create():
+    try:
+        data = task_payload(body_object(), user=g.user)
+    except ValueError as error:
+        return validation_error([("body", str(error))])
+    assigned_id = data["assigned_to_user_id"]
+    if g.user["role"] == "Sale" and assigned_id != g.user["id"]:
+        return json_error("Sale chỉ được tạo Task cho chính mình.", 403)
+    if not query("SELECT id FROM users WHERE id=%s AND role='Sale' AND status='ACTIVE'", (assigned_id,)):
+        return json_error("Người được giao Task phải là Sale đang hoạt động.", 400)
+    task_id, _ = execute(
+        "INSERT INTO tasks (assigned_to_user_id,created_by_user_id,title,due_at,priority,status,completed_at) "
+        "VALUES (%s,%s,%s,%s,%s,%s,IF(%s='COMPLETED',NOW(),NULL))",
+        (assigned_id, g.user["id"], data["title"], data.get("due_at"), data.get("priority", "MEDIUM"),
+         data.get("status", "OPEN"), data.get("status", "OPEN")),
+    )
+    task = query(task_select(" WHERE t.id=%s"), (task_id,))[0]
+    return jsonify({"task": task}), 201
+
+
+@app.patch("/api/tasks/<task_id>")
+@app.put("/api/tasks/<task_id>")
+@auth_required
+def task_update(task_id):
+    try:
+        parsed_id = positive_id(task_id)
+        data = task_payload(body_object(), partial=True, user=g.user)
+    except ValueError as error:
+        return validation_error([("body", str(error))])
+    if not data:
+        return json_error("Cần cung cấp ít nhất một trường để cập nhật Task.", 400)
+    if "assigned_to_user_id" in data:
+        if g.user["role"] == "Sale" and data["assigned_to_user_id"] != g.user["id"]:
+            return json_error("Sale không được giao Task cho người khác.", 403)
+        if not query("SELECT id FROM users WHERE id=%s AND role='Sale' AND status='ACTIVE'", (data["assigned_to_user_id"],)):
+            return json_error("Người được giao Task phải là Sale đang hoạt động.", 400)
+
+    def update(cursor):
+        scope, scope_values = task_scope(g.user)
+        where = "t.id=%s" + (f" AND {scope}" if scope else "")
+        cursor.execute("SELECT t.id FROM tasks t WHERE " + where + " FOR UPDATE", tuple([parsed_id] + scope_values))
+        if not cursor.fetchone():
+            return False
+        columns = {"title": "title", "due_at": "due_at", "priority": "priority", "status": "status", "assigned_to_user_id": "assigned_to_user_id"}
+        assignments = [f"{columns[field]}=%s" for field in data]
+        params = list(data.values())
+        if "status" in data:
+            assignments.append("completed_at=IF(%s='COMPLETED',COALESCE(completed_at,NOW()),NULL)")
+            params.append(data["status"])
+        cursor.execute("UPDATE tasks SET " + ",".join(assignments) + " WHERE id=%s", tuple(params + [parsed_id]))
+        return True
+
+    if not transaction(update):
+        return json_error("Không tìm thấy Task hoặc bạn không có quyền thao tác.", 404)
+    task = query(task_select(" WHERE t.id=%s"), (parsed_id,))[0]
+    return jsonify({"task": task})
 
 
 @app.post("/api/activities")
