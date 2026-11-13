@@ -224,7 +224,14 @@ td { padding: 13px 17px; border-top: 1px solid #f0f2f6; color: #58667c; font-siz
 .timeline { padding: 13px 17px 5px; }
 .timeline-item { position: relative; display: flex; gap: 12px; padding-bottom: 17px; }
 .timeline-item:not(:last-child)::before { position: absolute; top: 9px; bottom: 0; left: 4px; width: 1px; background: #e4e9f2; content: ''; }
+.activity-timeline .timeline-item:not(:last-child)::before { top: 27px; left: 13px; }
 .timeline-dot { z-index: 1; width: 9px; height: 9px; flex: 0 0 9px; margin-top: 2px; border: 2px solid #6984e8; border-radius: 50%; background: #fff; }
+.activity-type-icon { z-index: 1; display: grid; width: 28px; height: 28px; flex: 0 0 28px; place-items: center; border: 1px solid #dce4fb; border-radius: 50%; background: #f2f5ff; color: #536ed0; font-size: 13px; }
+.activity-email { border-color: #d7e9fa; background: #eff8ff; color: #2877b8; }
+.activity-meeting { border-color: #e6ddfb; background: #f6f1ff; color: #7952b8; }
+.activity-note { border-color: #f5e6c8; background: #fff9ed; color: #a16c18; }
+.activity-status { border-color: #d7eee1; background: #effaf4; color: #34815a; }
+.activity-other { border-color: #e0e5ec; background: #f5f7fa; color: #68758a; }
 .timeline-item > div { display: grid; gap: 4px; }
 .timeline-item strong { color: #43516a; font-size: 10px; }
 .timeline-item span { color: #8b97aa; font-size: 9px; }

@@ -331,6 +331,20 @@ function convertModal() {
     <form class="customer-form single-column" data-form="convert"><label>Tên Account<input name="accountName" required minlength="2" maxlength="160" value="${escapeHtml(state.accountName)}"></label>${alertBox(state.error)}
     <div class="form-actions"><button type="button" class="secondary-button" data-action="close-convert">Hủy</button><button type="submit" class="primary-button compact">Chuyển đổi</button></div></form></section></div>`;
 }
+function activityTimelineItem(activity) {
+  const presentation = {
+    CALL: { icon: '☎', label: 'Cuộc gọi', className: 'activity-call' },
+    EMAIL: { icon: '✉', label: 'Email', className: 'activity-email' },
+    MEETING: { icon: '▦', label: 'Cuộc họp', className: 'activity-meeting' },
+    NOTE: { icon: '✎', label: 'Ghi chú', className: 'activity-note' },
+    STATUS_CHANGE: { icon: '↻', label: 'Cập nhật trạng thái', className: 'activity-status' },
+    OTHER: { icon: '•', label: 'Hoạt động khác', className: 'activity-other' },
+  }[activity.type] || { icon: '•', label: 'Hoạt động', className: 'activity-other' };
+  const occurredAt = activity.occurredAt ? new Date(activity.occurredAt).toLocaleString('vi-VN') : 'Không rõ thời gian';
+  return `<div class="timeline-item"><span class="activity-type-icon ${presentation.className}" aria-label="${presentation.label}" title="${presentation.label}">${presentation.icon}</span>
+    <div><strong>${escapeHtml(activity.subject)}</strong><span>${presentation.label} · ${escapeHtml(occurredAt)}</span>
+    ${activity.details ? `<p>${escapeHtml(activity.details)}</p>` : ''}</div></div>`;
+}
 function accountDetailPage() {
   if (!state.detail) return `<div class="app-shell">${appSidebar('customers')}<main class="admin-content"><div class="loading-screen customer-loading">Đang tải hồ sơ khách hàng...</div></main></div>`;
   const { account, contacts, deals, activities } = state.detail;
@@ -342,8 +356,8 @@ function accountDetailPage() {
     ${contacts.length ? `<div class="related-list">${contacts.map((c) => `<div class="related-item"><div class="avatar">${initials(c.firstName)}</div><div class="related-main"><strong>${escapeHtml(c.firstName)} ${escapeHtml(c.lastName)}</strong><span>${escapeHtml(c.jobTitle || 'Chưa có chức vụ')}</span><small>${escapeHtml(c.email || c.phone || 'Chưa có thông tin liên hệ')}</small></div></div>`).join('')}</div>` : '<p class="empty-state">Chưa có người liên hệ.</p>'}</article>
     <article class="table-card detail-section"><div class="detail-section-heading"><div class="icon-tile small-tile">◇</div><div><strong>Cơ hội kinh doanh</strong><span>${deals.length} cơ hội gần đây</span></div></div>
     ${deals.length ? `<div class="related-list">${deals.map((d) => `<div class="related-item deal-item"><div class="related-main"><strong>${escapeHtml(d.name)}</strong><span>${escapeHtml(d.stage)} · ${escapeHtml(d.probability)}%</span></div><strong>${escapeHtml(d.currency)} ${Number(d.amount).toLocaleString('vi-VN')}</strong></div>`).join('')}</div>` : '<p class="empty-state">Chưa có cơ hội kinh doanh.</p>'}</article>
-    <article class="table-card detail-section activity-section"><div class="detail-section-heading"><div class="icon-tile small-tile">◷</div><div><strong>Lịch sử tương tác</strong><span>${activities.length} hoạt động gần đây</span></div></div>
-    ${activities.length ? `<div class="timeline">${activities.map((a) => `<div class="timeline-item"><span class="timeline-dot"></span><div><strong>${escapeHtml(a.subject)}</strong><span>${escapeHtml(a.type)} · ${escapeHtml(new Date(a.occurredAt).toLocaleString('vi-VN'))}</span>${a.details ? `<p>${escapeHtml(a.details)}</p>` : ''}</div></div>`).join('')}</div>` : '<p class="empty-state">Chưa có lịch sử tương tác.</p>'}</article></section></main></div>`;
+    <article class="table-card detail-section activity-section"><div class="detail-section-heading"><div class="icon-tile small-tile">◷</div><div><strong>Lịch sử tương tác</strong><span>${activities.length} hoạt động gần đây · mới nhất trước</span></div></div>
+    ${activities.length ? `<div class="timeline activity-timeline">${activities.map(activityTimelineItem).join('')}</div>` : '<p class="empty-state">Chưa có lịch sử tương tác.</p>'}</article></section></main></div>`;
 }
 async function loadCustomers() {
   const key = `${state.customerView}|${state.customerPage}|${state.customerSearch}|${state.customerStatus}`;
