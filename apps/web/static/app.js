@@ -7,6 +7,20 @@ const state = {
   users: [],
   deals: [],
   dealsLoaded: false,
+  tasks: [],
+  tasksLoaded: false,
+  taskStatusFilter: '',
+  taskPriorityFilter: '',
+  taskAssignees: [],
+  taskAssigneesLoaded: false,
+  taskFormOpen: false,
+  taskEdit: null,
+  appointments: [],
+  appointmentsLoaded: false,
+  calendarCursor: new Date(),
+  calendarMode: 'month',
+  appointmentFormOpen: false,
+  appointmentFormDate: '',
   usersLoaded: false,
   customerItems: [],
   customerView: 'leads',
@@ -26,6 +40,8 @@ let customerRequest = '';
 let customerDebounce;
 let refreshRequest;
 let unmountDealBoard = null;
+let taskRequest = '';
+let appointmentRequest = '';
 
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -84,6 +100,8 @@ function appSidebar(active = 'customers') {
     ${state.user?.role === 'Admin' ? '<a class="nav-item" href="/admin/users">♙ &nbsp; Quản lý người dùng</a>' : ''}
     <a class="nav-item ${active === 'customers' ? 'active' : ''}" href="/customers">♧ &nbsp; Khách hàng</a>
     <a class="nav-item ${active === 'deals' ? 'active' : ''}" href="/deals">▤ &nbsp; Cơ hội Deal</a>
+    <a class="nav-item ${active === 'tasks' ? 'active' : ''}" href="/tasks">✓ &nbsp; Công việc</a>
+    <a class="nav-item ${active === 'calendar' ? 'active' : ''}" href="/calendar">▦ &nbsp; Lịch làm việc</a>
     <a class="nav-item ${active === 'workspace' ? 'active' : ''}" href="/workspace">▦ &nbsp; Tổng quan</a>
     <div class="sidebar-bottom"><div class="profile-chip"><div class="avatar">${initials(state.user?.name)}</div><div><strong>${escapeHtml(state.user?.name)}</strong><span>${escapeHtml(state.user?.role)}</span></div></div>
     <button class="logout-button" data-action="logout">↪ &nbsp; Đăng xuất</button></div></aside>`;
@@ -139,6 +157,97 @@ function dealsPage() {
     ${alertBox(state.error)}
     ${state.dealsLoaded && !state.deals.length ? '<p class="muted deal-empty">Chưa có Deal để hiển thị.</p>' : ''}
     <div id="deal-board-root"></div>
+  </main></div>`;
+}
+const taskStatusLabels = { TODO: 'Cần làm', IN_PROGRESS: 'Đang thực hiện', DONE: 'Hoàn thành', CANCELLED: 'Đã hủy' };
+const taskPriorityLabels = { LOW: 'Thấp', MEDIUM: 'Trung bình', HIGH: 'Cao' };
+function taskOverdue(task) {
+  const today = new Date();
+  const todayKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+  return task.due_date && String(task.due_date).slice(0, 10) < todayKey && !['DONE', 'CANCELLED'].includes(task.status);
+}
+function taskDate(value) {
+  if (!value) return 'Chưa đặt hạn';
+  return new Date(`${String(value).slice(0, 10)}T00:00:00`).toLocaleDateString('vi-VN');
+}
+function tasksPage() {
+  const overdue = state.tasks.filter(taskOverdue);
+  const canAssign = ['Admin', 'Manager'].includes(state.user?.role);
+  const activeAssigneeIds = state.taskAssignees.map((user) => String(user.id));
+  const inactiveCurrentAssignee = state.taskEdit && !activeAssigneeIds.includes(String(state.taskEdit.assigned_to));
+  const assigneeField = canAssign
+    ? `<label>Giao cho<select name="assigned_to" required>${inactiveCurrentAssignee ? `<option value="${state.taskEdit.assigned_to}" selected>${escapeHtml(state.taskEdit.assignee_name)} · không còn hoạt động</option>` : ''}${!state.taskEdit && !state.taskAssignees.length ? '<option value="" selected disabled>Không có Sale đang hoạt động</option>' : ''}${state.taskAssignees.map((user) => `<option value="${user.id}" ${String(state.taskEdit?.assigned_to || '') === String(user.id) ? 'selected' : ''}>${escapeHtml(user.name)} · ${escapeHtml(user.email)}</option>`).join('')}</select></label>`
+    : '';
+  return `<div class="app-shell">${appSidebar('tasks')}<main class="admin-content task-content">
+    <header class="topbar"><div><span class="eyebrow">TASK MANAGEMENT</span><h1>Công việc</h1></div><div class="admin-avatar">${escapeHtml(state.user?.role || '')}</div></header>
+    <section class="page-intro"><div><h2>Theo dõi tiến độ công việc</h2><p class="muted">Lọc theo trạng thái, ưu tiên và nhận diện công việc quá hạn.</p></div><button class="primary-button compact" data-action="new-task">＋ Tạo Task</button></section>
+    ${alertBox(state.error)}${alertBox(state.notice, 'success')}
+    ${overdue.length ? `<div class="alert error task-overdue-alert" role="alert">⚠ Có ${overdue.length} Task quá hạn cần xử lý.</div>` : ''}
+    ${state.taskFormOpen ? `<section class="task-form-card"><form class="customer-form" data-form="task"><label class="wide-field">Tiêu đề<input name="title" required minlength="2" maxlength="180" value="${escapeHtml(state.taskEdit?.title || '')}"></label>
+      <label>Ngày đến hạn<input name="due_date" type="date" value="${escapeHtml(state.taskEdit?.due_date ? String(state.taskEdit.due_date).slice(0, 10) : '')}"></label>
+      <label>Ưu tiên<select name="priority">${[['LOW','Thấp'],['MEDIUM','Trung bình'],['HIGH','Cao']].map(([value,label]) => `<option value="${value}" ${(state.taskEdit?.priority || 'MEDIUM') === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
+      <label>Trạng thái<select name="status">${Object.entries(taskStatusLabels).map(([value,label]) => `<option value="${value}" ${(state.taskEdit?.status || 'TODO') === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label>
+      ${assigneeField}${alertBox(state.error)}
+      <div class="form-actions wide-field"><button type="button" class="secondary-button" data-action="close-task-form">Hủy</button><button type="submit" class="primary-button compact">${state.taskEdit ? 'Lưu thay đổi' : 'Tạo Task'}</button></div></form></section>` : ''}
+    <section class="table-card task-table-card"><div class="table-toolbar"><div class="table-title"><div class="icon-tile small-tile">✓</div><div><strong>Danh sách Task</strong><span>${state.tasks.length} công việc · ${overdue.length} quá hạn</span></div></div>
+      <div class="task-filters"><select aria-label="Lọc trạng thái Task" data-input="task-status-filter"><option value="">Tất cả trạng thái</option>${Object.entries(taskStatusLabels).map(([value,label]) => `<option value="${value}" ${state.taskStatusFilter === value ? 'selected' : ''}>${label}</option>`).join('')}</select>
+      <select aria-label="Lọc mức ưu tiên" data-input="task-priority-filter"><option value="">Mọi mức ưu tiên</option>${Object.entries(taskPriorityLabels).map(([value,label]) => `<option value="${value}" ${state.taskPriorityFilter === value ? 'selected' : ''}>${label}</option>`).join('')}</select></div></div>
+      <div class="table-scroll"><table><thead><tr><th>CÔNG VIỆC</th><th>NGƯỜI PHỤ TRÁCH</th><th>HẠN HOÀN THÀNH</th><th>ƯU TIÊN</th><th>TRẠNG THÁI</th><th>THAO TÁC</th></tr></thead><tbody>
+      ${state.tasks.map((task) => `<tr class="${taskOverdue(task) ? 'task-row-overdue' : ''}"><td><strong>${escapeHtml(task.title)}</strong>${taskOverdue(task) ? '<span class="overdue-label">Quá hạn</span>' : ''}</td><td>${escapeHtml(task.assignee_name || '—')}</td><td>${taskDate(task.due_date)}</td>
+        <td><span class="priority-pill priority-${String(task.priority || 'MEDIUM').toLowerCase()}">${escapeHtml(taskPriorityLabels[task.priority] || task.priority)}</span></td>
+        <td><select class="task-status-select" aria-label="Trạng thái ${escapeHtml(task.title)}" data-task-status="${task.id}">${Object.entries(taskStatusLabels).map(([value,label]) => `<option value="${value}" ${task.status === value ? 'selected' : ''}>${label}</option>`).join('')}</select></td>
+        <td><button class="text-button" data-action="edit-task" data-id="${task.id}">Sửa</button></td></tr>`).join('') || '<tr><td class="empty-row" colspan="6">Chưa có Task phù hợp.</td></tr>'}
+      </tbody></table></div></section></main></div>`;
+}
+function calendarDateKey(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+function calendarRange() {
+  const cursor = new Date(state.calendarCursor);
+  const start = new Date(cursor.getFullYear(), cursor.getMonth(), cursor.getDate());
+  if (state.calendarMode === 'month') {
+    start.setDate(1);
+    start.setDate(start.getDate() - ((start.getDay() + 6) % 7));
+    const end = new Date(start);
+    end.setDate(end.getDate() + 41);
+    return { start, end };
+  }
+  start.setDate(start.getDate() - ((start.getDay() + 6) % 7));
+  const end = new Date(start);
+  end.setDate(end.getDate() + 6);
+  return { start, end };
+}
+function calendarPage() {
+  const { start, end } = calendarRange();
+  const dayCount = state.calendarMode === 'month' ? 42 : 7;
+  const weekdays = ['T2', 'T3', 'T4', 'T5', 'T6', 'T7', 'CN'];
+  const days = Array.from({ length: dayCount }, (_, index) => {
+    const date = new Date(start);
+    date.setDate(start.getDate() + index);
+    const key = calendarDateKey(date);
+    const events = state.appointments.filter((item) => String(item.startsAt).slice(0, 10) === key);
+    const today = key === calendarDateKey(new Date());
+    const outsideMonth = state.calendarMode === 'month' && date.getMonth() !== state.calendarCursor.getMonth();
+    return `<article class="calendar-day ${today ? 'calendar-today' : ''} ${outsideMonth ? 'calendar-outside' : ''}"><div class="calendar-day-heading"><span>${date.getDate()}</span><button class="calendar-add" data-action="new-appointment" data-date="${key}" aria-label="Tạo lịch hẹn ngày ${key}">＋</button></div>
+      <div class="calendar-events">${events.map((item) => `<div class="calendar-event event-${String(item.status).toLowerCase()}"><span>${escapeHtml(new Date(item.startsAt).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }))} · ${escapeHtml(item.title)}</span>
+        ${item.status === 'SCHEDULED' && Number(item.organizerId) === Number(state.user?.id) ? `<button data-action="appointment-status" data-id="${item.id}">Hoàn thành</button>` : item.status !== 'SCHEDULED' ? `<small>${item.status === 'COMPLETED' ? 'Hoàn thành' : 'Đã hủy'}</small>` : ''}</div>`).join('') || '<span class="calendar-empty"></span>'}</div></article>`;
+  });
+  const title = state.calendarMode === 'month'
+    ? state.calendarCursor.toLocaleDateString('vi-VN', { month: 'long', year: 'numeric' })
+    : `${start.toLocaleDateString('vi-VN', { day: 'numeric', month: 'short' })} – ${end.toLocaleDateString('vi-VN', { day: 'numeric', month: 'short', year: 'numeric' })}`;
+  return `<div class="app-shell">${appSidebar('calendar')}<main class="admin-content calendar-content">
+    <header class="topbar"><div><span class="eyebrow">APPOINTMENT CALENDAR</span><h1>Lịch làm việc</h1></div><div class="admin-avatar">${escapeHtml(state.user?.role || '')}</div></header>
+    <section class="calendar-toolbar"><div class="calendar-navigation"><button class="secondary-button compact" data-action="calendar-prev" aria-label="Thời gian trước">←</button><button class="secondary-button compact" data-action="calendar-today">Hôm nay</button><button class="secondary-button compact" data-action="calendar-next" aria-label="Thời gian sau">→</button><h2>${escapeHtml(title)}</h2></div>
+      <div class="calendar-controls"><div class="calendar-mode"><button class="${state.calendarMode === 'month' ? 'selected' : ''}" data-action="calendar-mode" data-mode="month">Tháng</button><button class="${state.calendarMode === 'week' ? 'selected' : ''}" data-action="calendar-mode" data-mode="week">Tuần</button></div><button class="primary-button compact" data-action="new-appointment" data-date="${calendarDateKey(new Date())}">＋ Tạo lịch hẹn</button></div></section>
+    ${alertBox(state.error)}${alertBox(state.notice, 'success')}
+    <section class="table-card calendar-card"><div class="calendar-weekdays">${weekdays.map((day) => `<span>${day}</span>`).join('')}</div><div class="calendar-grid ${state.calendarMode === 'week' ? 'calendar-week-view' : ''}">${days.join('')}</div></section>
+    ${state.appointmentFormOpen ? `<div class="modal-backdrop" data-action="close-appointment-form"><section class="customer-modal narrow-modal" role="dialog" aria-modal="true" aria-labelledby="appointment-form-title"><div class="modal-heading"><div><span class="eyebrow">NEW APPOINTMENT</span><h2 id="appointment-form-title">Tạo lịch hẹn</h2></div><button class="modal-close" type="button" data-action="close-appointment-form">×</button></div>
+      <form class="customer-form single-column" data-form="appointment"><label>Tiêu đề<input name="title" required minlength="2" maxlength="180"></label><label>Ngày<input name="date" type="date" required value="${escapeHtml(state.appointmentFormDate)}"></label>
+      <div class="appointment-time-fields"><label>Bắt đầu<input name="startsTime" type="time" required value="09:00"></label><label>Kết thúc<input name="endsTime" type="time" required value="09:30"></label></div>
+      <label>Địa điểm<input name="location" maxlength="255"></label><label>Mô tả<textarea name="description" rows="2" maxlength="5000"></textarea></label>
+      <label>Chu kỳ lặp<select name="recurrenceFrequency"><option value="">Không lặp</option><option value="WEEKLY">Hàng tuần</option><option value="MONTHLY">Hàng tháng</option></select></label>
+      <label>Ngày kết thúc lặp<input name="recurrenceUntil" type="date"></label>${alertBox(state.error)}
+      <div class="form-actions"><button type="button" class="secondary-button" data-action="close-appointment-form">Hủy</button><button type="submit" class="primary-button compact">Tạo lịch hẹn</button></div></form></section></div>` : ''}
   </main></div>`;
 }
 
@@ -285,6 +394,63 @@ async function loadDeals() {
   }
   if (route() === '/deals') render();
 }
+async function loadTasks() {
+  const params = new URLSearchParams();
+  if (state.taskStatusFilter) params.set('status', state.taskStatusFilter);
+  if (state.taskPriorityFilter) params.set('priority', state.taskPriorityFilter);
+  const key = `${state.taskStatusFilter}|${state.taskPriorityFilter}`;
+  if (taskRequest === key && state.tasksLoaded) return;
+  taskRequest = key;
+  state.tasksLoaded = true;
+  try {
+    const result = await api(`/tasks${params.toString() ? `?${params}` : ''}`);
+    if (taskRequest !== key) return;
+    state.tasks = result.tasks;
+    state.error = '';
+  } catch (error) {
+    if (taskRequest !== key) return;
+    state.error = error.message;
+  }
+  if (route() === '/tasks' && taskRequest === key) render();
+}
+async function loadTaskAssignees() {
+  state.taskAssigneesLoaded = true;
+  try {
+    state.taskAssignees = (await api('/tasks/assignees')).users;
+  } catch (error) {
+    state.error = error.message;
+  }
+  if (route() === '/tasks') render();
+}
+async function loadAppointments() {
+  const { start, end } = calendarRange();
+  const key = `${state.calendarMode}|${calendarDateKey(start)}|${calendarDateKey(end)}`;
+  if (appointmentRequest === key) return;
+  appointmentRequest = key;
+  state.appointmentsLoaded = true;
+  try {
+    const appointments = [];
+    let page = 1;
+    let total = 0;
+    do {
+      const params = new URLSearchParams({
+        from: calendarDateKey(start), to: calendarDateKey(end),
+        page: String(page), pageSize: '50',
+      });
+      const result = await api(`/appointments?${params}`);
+      if (appointmentRequest !== key) return;
+      appointments.push(...result.appointments);
+      total = result.total;
+      page += 1;
+    } while (appointments.length < total);
+    state.appointments = appointments;
+    state.error = '';
+  } catch (error) {
+    if (appointmentRequest !== key) return;
+    state.error = error.message;
+  }
+  if (route() === '/calendar' && appointmentRequest === key) render();
+}
 function render() {
   if (state.loading) {
     root.innerHTML = '<div class="loading-screen">Đang tải phiên đăng nhập...</div>';
@@ -328,6 +494,13 @@ function render() {
       });
     }
     if (!state.dealsLoaded) void loadDeals();
+  } else if (path === '/tasks') {
+    root.innerHTML = tasksPage();
+    if (!state.tasksLoaded) void loadTasks();
+    if (['Admin', 'Manager'].includes(state.user?.role) && !state.taskAssigneesLoaded) void loadTaskAssignees();
+  } else if (path === '/calendar') {
+    root.innerHTML = calendarPage();
+    if (!state.appointmentsLoaded) void loadAppointments();
   } else if (path === '/workspace') root.innerHTML = workspacePage();
   else navigate(state.user?.role === 'Admin' ? '/admin/users' : '/workspace', true);
 }
@@ -403,6 +576,45 @@ root.addEventListener('click', async (event) => {
     case 'page-next':
       if (state.customerPage < Math.ceil(state.customerTotal / 10)) { state.customerPage += 1; customerRequest = ''; render(); }
       break;
+    case 'new-task':
+      state.taskEdit = null; state.taskFormOpen = true; state.error = ''; render(); break;
+    case 'close-task-form':
+      state.taskFormOpen = false; state.taskEdit = null; state.error = ''; render(); break;
+    case 'edit-task':
+      state.taskEdit = state.tasks.find((task) => Number(task.id) === id) || null;
+      state.taskFormOpen = Boolean(state.taskEdit); state.error = ''; render(); break;
+    case 'calendar-prev':
+    case 'calendar-next': {
+      const direction = button.dataset.action === 'calendar-prev' ? -1 : 1;
+      if (state.calendarMode === 'month') {
+        state.calendarCursor.setDate(1);
+        state.calendarCursor.setMonth(state.calendarCursor.getMonth() + direction);
+      }
+      else state.calendarCursor.setDate(state.calendarCursor.getDate() + 7 * direction);
+      state.appointmentsLoaded = false; appointmentRequest = ''; render(); break;
+    }
+    case 'calendar-today':
+      state.calendarCursor = new Date();
+      state.appointmentsLoaded = false; appointmentRequest = ''; render(); break;
+    case 'calendar-mode':
+      if (state.calendarMode !== button.dataset.mode) {
+        state.calendarMode = button.dataset.mode; state.appointmentsLoaded = false; appointmentRequest = ''; render();
+      }
+      break;
+    case 'new-appointment':
+      state.appointmentFormDate = button.dataset.date || calendarDateKey(new Date());
+      state.appointmentFormOpen = true; state.error = ''; render(); break;
+    case 'close-appointment-form':
+      if (button.classList.contains('modal-backdrop') && event.target !== button) break;
+      state.appointmentFormOpen = false; state.error = ''; render(); break;
+    case 'appointment-status':
+      try {
+        await api(`/appointments/${id}`, { method: 'PATCH', body: JSON.stringify({ status: 'COMPLETED' }) });
+        state.notice = 'Đã đánh dấu lịch hẹn hoàn thành.';
+        state.appointmentsLoaded = false; appointmentRequest = '';
+      } catch (error) { state.error = error.message; }
+      render();
+      break;
   }
 });
 root.addEventListener('input', (event) => {
@@ -429,11 +641,24 @@ root.addEventListener('change', async (event) => {
     state.customerPage = 1;
     customerRequest = '';
     render();
+  } else if (input.dataset.input === 'task-status-filter') {
+    state.taskStatusFilter = input.value;
+    state.tasksLoaded = false; taskRequest = ''; render();
+  } else if (input.dataset.input === 'task-priority-filter') {
+    state.taskPriorityFilter = input.value;
+    state.tasksLoaded = false; taskRequest = ''; render();
   } else if (input.dataset.roleId) {
     try {
       await api(`/admin/users/${input.dataset.roleId}`, { method: 'PATCH', body: JSON.stringify({ role: input.value }) });
       state.users = (await api('/admin/users')).users;
       state.notice = 'Đã cập nhật vai trò.';
+    } catch (error) { state.error = error.message; }
+    render();
+  } else if (input.dataset.taskStatus) {
+    try {
+      await api(`/tasks/${input.dataset.taskStatus}`, { method: 'PATCH', body: JSON.stringify({ status: input.value }) });
+      state.notice = 'Đã cập nhật trạng thái Task.';
+      state.tasksLoaded = false; taskRequest = '';
     } catch (error) { state.error = error.message; }
     render();
   }
@@ -483,6 +708,39 @@ root.addEventListener('submit', async (event) => {
       state.converting = null;
       customerRequest = '';
       navigate(`/customers/accounts/${result.accountId}`);
+    } else if (form.dataset.form === 'task') {
+      if (state.taskEdit && data.assigned_to === String(state.taskEdit.assigned_to)
+        && !state.taskAssignees.some((user) => String(user.id) === data.assigned_to)) {
+        delete data.assigned_to;
+      }
+      const endpoint = state.taskEdit ? `/tasks/${state.taskEdit.id}` : '/tasks';
+      await api(endpoint, {
+        method: state.taskEdit ? 'PATCH' : 'POST',
+        body: JSON.stringify(data),
+      });
+      state.taskFormOpen = false;
+      state.taskEdit = null;
+      state.tasksLoaded = false; taskRequest = '';
+      state.error = ''; state.notice = 'Đã lưu Task.';
+      render();
+    } else if (form.dataset.form === 'appointment') {
+      if (data.endsTime <= data.startsTime) throw new Error('Thời gian kết thúc phải sau thời gian bắt đầu.');
+      const appointment = {
+        title: data.title,
+        startsAt: `${data.date}T${data.startsTime}:00`,
+        endsAt: `${data.date}T${data.endsTime}:00`,
+        location: data.location,
+        description: data.description,
+      };
+      if (data.recurrenceFrequency) {
+        appointment.recurrenceFrequency = data.recurrenceFrequency;
+        if (data.recurrenceUntil) appointment.recurrenceUntil = data.recurrenceUntil;
+      }
+      await api('/appointments', { method: 'POST', body: JSON.stringify(appointment) });
+      state.appointmentFormOpen = false;
+      state.appointmentsLoaded = false; appointmentRequest = '';
+      state.error = ''; state.notice = 'Đã tạo lịch hẹn.';
+      render();
     }
   } catch (error) {
     state.loginBusy = false;

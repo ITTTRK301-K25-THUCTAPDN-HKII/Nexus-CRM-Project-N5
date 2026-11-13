@@ -1911,6 +1911,180 @@ def convert_lead(lead_id):
     return jsonify({"accountId": result["accountId"], "contactId": result["contactId"], "message": "Đã chuyển đổi lead thành khách hàng."}), 201
 
 
+def product_payload(data, partial=False):
+    allowed = {"sku", "name", "description", "unitPrice", "currency", "isActive"}
+    if any(field not in allowed for field in data):
+        raise ValueError("Dữ liệu sản phẩm chứa trường không hợp lệ.")
+    if not partial and not {"sku", "name", "unitPrice"}.issubset(data):
+        raise ValueError("Sản phẩm cần có SKU, tên và đơn giá.")
+
+    result = {}
+    if "sku" in data or not partial:
+        sku = clean_text(data.get("sku"), "SKU", 80, True, 1)
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/-]*", sku):
+            raise ValueError("SKU chỉ được chứa chữ cái, chữ số, dấu chấm, gạch dưới, gạch chéo hoặc gạch ngang.")
+        result["sku"] = sku.upper()
+    if "name" in data or not partial:
+        result["name"] = clean_text(data.get("name"), "Tên sản phẩm", 160, True, 2)
+    if "description" in data:
+        result["description"] = clean_text(data["description"], "Mô tả", 5000) or None
+    if "unitPrice" in data or not partial:
+        value = data.get("unitPrice")
+        if isinstance(value, bool) or value is None:
+            raise ValueError("Đơn giá không hợp lệ.")
+        try:
+            price = Decimal(str(value))
+        except (InvalidOperation, ValueError):
+            raise ValueError("Đơn giá không hợp lệ.")
+        if not price.is_finite() or price < 0 or price > Decimal("9999999999999.99"):
+            raise ValueError("Đơn giá phải nằm trong khoảng 0 đến 9999999999999.99.")
+        try:
+            rounded_price = price.quantize(Decimal("0.01"))
+        except InvalidOperation as error:
+            raise ValueError("Đơn giá chỉ được có tối đa 2 chữ số thập phân.") from error
+        if rounded_price != price:
+            raise ValueError("Đơn giá chỉ được có tối đa 2 chữ số thập phân.")
+        result["unitPrice"] = price
+    if "currency" in data or not partial:
+        currency = clean_text(data.get("currency", "USD"), "Tiền tệ", 3, True, 3).upper()
+        if not re.fullmatch(r"[A-Z]{3}", currency):
+            raise ValueError("Mã tiền tệ cần gồm đúng 3 chữ cái.")
+        result["currency"] = currency
+    if "isActive" in data or not partial:
+        is_active = data.get("isActive", True)
+        if type(is_active) is not bool:
+            raise ValueError("Trạng thái hoạt động không hợp lệ.")
+        result["isActive"] = is_active
+    return result
+
+
+PRODUCT_SELECT = (
+    "SELECT id,sku,name,description,unit_price AS unitPrice,currency,"
+    "is_active AS isActive,created_at AS createdAt,updated_at AS updatedAt FROM products"
+)
+
+
+@app.get("/api/products")
+@auth_required
+def products_list():
+    filters = []
+    values = []
+    active = request.args.get("active")
+    if active is not None:
+        if active not in ("true", "false"):
+            return json_error("Tham số active cần là true hoặc false.", 400)
+        filters.append("is_active=%s")
+        values.append(active == "true")
+    search = request.args.get("search", "").strip()
+    if search:
+        if len(search) > 160:
+            return json_error("Từ khóa tìm kiếm quá dài.", 400)
+        filters.append("(sku LIKE %s OR name LIKE %s)")
+        values.extend([f"%{search}%", f"%{search}%"])
+    where = " WHERE " + " AND ".join(filters) if filters else ""
+    products = query(PRODUCT_SELECT + where + " ORDER BY name,id", tuple(values))
+    return jsonify({"products": products})
+
+
+@app.post("/api/products")
+@roles_required("Admin", "Manager")
+def product_create():
+    try:
+        data = product_payload(body_object())
+    except ValueError as error:
+        return validation_error([("body", str(error))])
+    try:
+        product_id, _ = execute(
+            "INSERT INTO products (sku,name,description,unit_price,currency,is_active) "
+            "VALUES (%s,%s,%s,%s,%s,%s)",
+            (data["sku"], data["name"], data.get("description"), data["unitPrice"],
+             data["currency"], data["isActive"]),
+        )
+    except IntegrityError as error:
+        if error.errno == errorcode.ER_DUP_ENTRY:
+            return json_error("SKU sản phẩm đã tồn tại.", 409, code="DUPLICATE_SKU")
+        raise
+    product = query(PRODUCT_SELECT + " WHERE id=%s", (product_id,))[0]
+    return jsonify({"product": product}), 201
+
+
+@app.get("/api/products/<product_id>")
+@auth_required
+def product_get(product_id):
+    try:
+        parsed_id = positive_id(product_id)
+    except ValueError as error:
+        return json_error(str(error), 400)
+    products = query(PRODUCT_SELECT + " WHERE id=%s", (parsed_id,))
+    return jsonify({"product": products[0]}) if products else json_error("Không tìm thấy sản phẩm.", 404)
+
+
+@app.patch("/api/products/<product_id>")
+@app.put("/api/products/<product_id>")
+@roles_required("Admin", "Manager")
+def product_update(product_id):
+    try:
+        parsed_id = positive_id(product_id)
+        data = product_payload(body_object(), partial=True)
+    except ValueError as error:
+        return validation_error([("body", str(error))])
+    if not data:
+        return json_error("Cần cung cấp ít nhất một trường để cập nhật sản phẩm.", 400)
+    columns = {
+        "sku": "sku", "name": "name", "description": "description",
+        "unitPrice": "unit_price", "currency": "currency", "isActive": "is_active",
+    }
+    assignments = [f"{columns[field]}=%s" for field in data]
+    try:
+        _, updated = execute(
+            "UPDATE products SET " + ",".join(assignments) + " WHERE id=%s",
+            tuple(list(data.values()) + [parsed_id]),
+        )
+    except IntegrityError as error:
+        if error.errno == errorcode.ER_DUP_ENTRY:
+            return json_error("SKU sản phẩm đã tồn tại.", 409, code="DUPLICATE_SKU")
+        raise
+    if not updated and not query("SELECT id FROM products WHERE id=%s", (parsed_id,)):
+        return json_error("Không tìm thấy sản phẩm.", 404)
+    product = query(PRODUCT_SELECT + " WHERE id=%s", (parsed_id,))[0]
+    return jsonify({"product": product})
+
+
+@app.delete("/api/products/<product_id>")
+@roles_required("Admin", "Manager")
+def product_delete(product_id):
+    try:
+        parsed_id = positive_id(product_id)
+    except ValueError as error:
+        return validation_error([("product_id", str(error))])
+
+    def delete(cursor):
+        cursor.execute("SELECT id FROM products WHERE id=%s FOR UPDATE", (parsed_id,))
+        if not cursor.fetchone():
+            return "not_found"
+        cursor.execute("SELECT id FROM quote_items WHERE product_id=%s LIMIT 1", (parsed_id,))
+        if cursor.fetchone():
+            return "referenced"
+        cursor.execute("DELETE FROM products WHERE id=%s", (parsed_id,))
+        return "deleted"
+
+    result = transaction(delete)
+    if result == "not_found":
+        return json_error("Không tìm thấy sản phẩm.", 404)
+    if result == "referenced":
+        return json_error("Không thể xóa sản phẩm đã được sử dụng trong báo giá.", 409, code="PRODUCT_IN_USE")
+    return "", 204
+
+
+@app.get("/api/tasks/assignees")
+@roles_required("Admin", "Manager")
+def task_assignees():
+    users = query(
+        "SELECT id,name,email FROM users WHERE role='Sale' AND status='ACTIVE' ORDER BY name,id"
+    )
+    return jsonify({"users": users})
+
+
 @app.get("/api/tasks")
 @auth_required
 def tasks_list():
@@ -2365,6 +2539,8 @@ def styles():
 @app.get("/customers")
 @app.get("/customers/accounts/<account_id>")
 @app.get("/deals")
+@app.get("/tasks")
+@app.get("/calendar")
 @app.get("/workspace")
 def web_app(**_kwargs):
     return render_template("index.html")
