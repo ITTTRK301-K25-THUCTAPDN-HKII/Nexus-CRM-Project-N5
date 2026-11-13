@@ -30,6 +30,9 @@ Node.js and npm are not required to run this version of the project. The Deal bo
    and `deals.lost_reason` exist. If missing, run
    `packages/api/sql/migrations/005_deal_close_fields.sql` once. New databases
    receive these fields from `schema.mysql.sql`.
+6. For an existing database, run
+   `packages/api/sql/migrations/006_task_telegram_notifications.sql` once to add
+   Telegram Chat IDs and retry tracking. New databases already have these fields.
 
 ## 2. Configure the database connection
 
@@ -43,6 +46,14 @@ Copy-Item .env.example .env
 
 The default database name is `nexus_crm`. Keep `.env` on your computer; do not
 commit it or share its credentials.
+
+## Telegram task reminders
+
+Set `TELEGRAM_BOT_TOKEN` in `.env` and set each Sale user's
+`users.telegram_chat_id` in MySQL. The Sale user must start a chat with the bot.
+The app scans every five minutes for open tasks due in 15–30 minutes. It tries
+each alert at most three times and records successful sends in
+`tasks.telegram_notified_at`.
 
 ## 3. Install Python dependencies
 
