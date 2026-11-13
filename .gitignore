@@ -10,3 +10,4 @@ coverage/
 __pycache__/
 *.py[cod]
 .venv/
+chat_id.txt

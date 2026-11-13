@@ -1,5 +1,6 @@
 import calendar
 import hashlib
+import json
 import os
 import re
 import secrets
@@ -11,6 +12,7 @@ from decimal import Decimal, InvalidOperation
 from functools import wraps
 from pathlib import Path
 from urllib.parse import quote
+from urllib.request import Request, urlopen
 
 import bcrypt
 import jwt
@@ -54,6 +56,9 @@ class APIJSONProvider(DefaultJSONProvider):
 
 
 app.json = APIJSONProvider(app)
+
+_task_notification_stop = threading.Event()
+_task_notification_thread = None
 
 _rate_lock = threading.Lock()
 _rate_events: dict[str, list[float]] = {}
@@ -2580,6 +2585,90 @@ def internal_error(error):
     return json_error("Lỗi máy chủ.", 500)
 
 
+def send_telegram_message(chat_id, text):
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    if not token:
+        raise RuntimeError("TELEGRAM_BOT_TOKEN chưa được cấu hình.")
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    body = json.dumps({"chat_id": str(chat_id), "text": text}).encode("utf-8")
+    req = Request(url, data=body, headers={"Content-Type": "application/json"}, method="POST")
+    with urlopen(req, timeout=10) as response:
+        result = json.loads(response.read().decode("utf-8"))
+    if not result.get("ok"):
+        raise RuntimeError(result.get("description", "Telegram API từ chối gửi tin nhắn."))
+
+
+def process_due_task_telegram_notifications(now=None):
+    """Send reminders for open tasks due in 15–30 minutes, retrying at most 3 times."""
+    token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    if not token:
+        app.logger.warning("Bỏ qua nhắc việc Telegram: TELEGRAM_BOT_TOKEN chưa được cấu hình.")
+        return {"sent": 0, "failed": 0, "skipped": 0}
+    if now is None:
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+    elif now.tzinfo:
+        now = now.astimezone(timezone.utc).replace(tzinfo=None)
+    start = now + timedelta(minutes=15)
+    end = now + timedelta(minutes=30)
+    candidates = query(
+        "SELECT t.id,t.title,t.priority,t.due_at AS dueAt,t.telegram_attempts AS attempts,"
+        "u.telegram_chat_id AS chatId FROM tasks t "
+        "INNER JOIN users u ON u.id=t.assigned_to_user_id "
+        "WHERE t.status IN ('OPEN','IN_PROGRESS') AND t.due_at BETWEEN %s AND %s "
+        "AND t.telegram_notified_at IS NULL AND t.telegram_attempts<3 "
+        "AND u.status='ACTIVE' AND u.telegram_chat_id IS NOT NULL AND u.telegram_chat_id<>'' "
+        "ORDER BY t.due_at,t.id",
+        (start, end),
+    )
+    sent = failed = 0
+    for task in candidates:
+        attempts = int(task["attempts"] or 0)
+        message = (
+            f"⏰ Task sắp đến hạn\n{task['title']}\n"
+            f"Ưu tiên: {task['priority']}\nĐến hạn: {task['dueAt']}"
+        )
+        while attempts < 3:
+            try:
+                send_telegram_message(task["chatId"], message)
+                attempts += 1
+                execute(
+                    "UPDATE tasks SET telegram_attempts=%s,telegram_notified_at=NOW() "
+                    "WHERE id=%s AND telegram_notified_at IS NULL",
+                    (attempts, task["id"]),
+                )
+                sent += 1
+                break
+            except Exception as error:
+                attempts += 1
+                execute("UPDATE tasks SET telegram_attempts=%s WHERE id=%s AND telegram_notified_at IS NULL", (attempts, task["id"]))
+                app.logger.warning("Gửi Telegram thất bại cho Task %s (lần %s/3): %s", task["id"], attempts, error)
+                if attempts < 3:
+                    time.sleep(0.5 * (2 ** (attempts - 1)))
+        else:
+            failed += 1
+    return {"sent": sent, "failed": failed, "skipped": 0}
+
+
+def _task_notification_loop():
+    while not _task_notification_stop.is_set():
+        try:
+            process_due_task_telegram_notifications()
+        except Exception:
+            app.logger.exception("Lỗi khi quét Task để gửi thông báo Telegram.")
+        _task_notification_stop.wait(300)
+
+
+def start_task_notification_scheduler():
+    global _task_notification_thread
+    if _task_notification_thread and _task_notification_thread.is_alive():
+        return
+    _task_notification_stop.clear()
+    _task_notification_thread = threading.Thread(
+        target=_task_notification_loop, name="task-telegram-scheduler", daemon=True,
+    )
+    _task_notification_thread.start()
+
+
 def seed_development_users():
     if NODE_ENV != "development":
         return
@@ -2598,4 +2687,10 @@ def seed_development_users():
 
 if __name__ == "__main__":
     seed_development_users()
-    app.run(host="127.0.0.1", port=int(os.getenv("PORT", "3001")), debug=NODE_ENV == "development")
+    use_reloader = NODE_ENV == "development"
+    if not use_reloader or os.getenv("WERKZEUG_RUN_MAIN") == "true":
+        start_task_notification_scheduler()
+    app.run(
+        host="127.0.0.1", port=int(os.getenv("PORT", "3001")),
+        debug=use_reloader, use_reloader=use_reloader,
+    )
