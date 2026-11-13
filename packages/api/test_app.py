@@ -39,7 +39,7 @@ class FlaskAppTests(unittest.TestCase):
         return user
 
     def test_static_app_and_health_endpoints(self):
-        for path in ("/", "/login", "/forgot-password", "/customers"):
+        for path in ("/", "/login", "/forgot-password", "/customers", "/tasks", "/calendar"):
             response = self.client.get(path)
             self.assertEqual(response.status_code, 200)
             self.assertIn(b"Nexus CRM", response.data)

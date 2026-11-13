@@ -300,3 +300,63 @@ td { padding: 13px 17px; border-top: 1px solid #f0f2f6; color: #58667c; font-siz
   .account-summary-grid, .customer-detail-grid { grid-template-columns: 1fr; }
   .activity-section { grid-column: auto; }
 }
+
+.task-content, .calendar-content { min-width: 0; }
+.task-overdue-alert { margin: 0 0 14px; }
+.task-form-card { margin: 0 0 16px; padding: 18px; border: 1px solid #e7ebf3; border-radius: 11px; background: #fff; }
+.task-form-card .customer-form { align-items: end; }
+.task-filters, .calendar-controls, .calendar-navigation { display: flex; align-items: center; gap: 9px; }
+.task-filters > select { height: 36px; border: 1px solid #e7ebf2; border-radius: 7px; padding: 0 10px; outline: 0; background: #fff; color: #58667c; font-size: 10px; }
+.task-row-overdue td { background: #fff9f8; }
+.overdue-label { display: block; margin-top: 4px; color: #b34a4e; font-size: 9px; font-weight: 700; }
+.priority-pill { display: inline-flex; padding: 5px 8px; border-radius: 20px; font-size: 9px; font-weight: 700; white-space: nowrap; }
+.priority-low { color: #26734e; background: #e7f7ef; }
+.priority-medium { color: #936021; background: #fff4e2; }
+.priority-high { color: #a13d42; background: #fff0ef; }
+.task-status-select { max-width: 150px; height: 31px; border: 1px solid #e7ebf2; border-radius: 7px; padding: 0 7px; background: #fff; color: #58667c; font-size: 10px; }
+.calendar-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 14px; margin: 23px 0 16px; }
+.calendar-navigation h2 { margin: 0 0 0 9px; color: #35435c; font: 700 16px 'Segoe UI', sans-serif; text-transform: capitalize; }
+.calendar-toolbar .secondary-button.compact { min-height: 36px; padding: 0 11px; font-size: 10px; }
+.calendar-mode { display: flex; padding: 3px; border: 1px solid #e7ebf2; border-radius: 8px; background: #fff; }
+.calendar-mode button { border: 0; border-radius: 6px; padding: 7px 10px; background: transparent; color: #78859a; font-size: 10px; }
+.calendar-mode button.selected { background: #eef1ff; color: #4563d4; font-weight: 700; }
+.calendar-card { overflow: hidden; }
+.calendar-weekdays, .calendar-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
+.calendar-weekdays { border-bottom: 1px solid #e8ecf3; background: #fbfcfe; }
+.calendar-weekdays span { padding: 11px 8px; color: #8d98aa; font-size: 9px; font-weight: 700; text-align: center; }
+.calendar-day { min-width: 0; min-height: 112px; padding: 8px; border-right: 1px solid #edf0f5; border-bottom: 1px solid #edf0f5; background: #fff; }
+.calendar-day:nth-child(7n) { border-right: 0; }
+.calendar-outside { background: #fafbfc; }
+.calendar-outside .calendar-day-heading > span { color: #b4bdcb; }
+.calendar-day-heading { display: flex; justify-content: space-between; align-items: center; color: #52617b; font-size: 10px; font-weight: 600; }
+.calendar-today .calendar-day-heading > span { display: grid; place-items: center; width: 23px; height: 23px; border-radius: 50%; background: #4a68dc; color: #fff; }
+.calendar-add { width: 22px; height: 22px; border: 0; border-radius: 6px; background: transparent; color: #8491a6; font-size: 15px; }
+.calendar-add:hover { background: #eef1ff; color: #4563d4; }
+.calendar-events { display: grid; align-content: start; gap: 4px; margin-top: 7px; }
+.calendar-event { min-width: 0; padding: 5px 6px; border-left: 2px solid #6984e8; border-radius: 4px; background: #f0f3ff; color: #475fba; font-size: 9px; line-height: 1.4; overflow-wrap: anywhere; }
+.calendar-event > span { display: block; }
+.calendar-event > button { margin-top: 3px; padding: 0; border: 0; background: transparent; color: #4563d4; font-size: 8px; font-weight: 700; }
+.calendar-event > small { display: block; margin-top: 2px; color: #79869a; font-size: 8px; }
+.event-completed { border-left-color: #3a9a6d; background: #eff9f3; color: #317350; }
+.event-cancelled { border-left-color: #a7afbd; background: #f3f4f6; color: #7d8798; }
+.calendar-empty { display: block; min-height: 1px; }
+.calendar-week-view .calendar-day { min-height: 390px; }
+.appointment-time-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+
+@media (max-width: 800px) {
+  .task-filters { flex-wrap: wrap; }
+  .calendar-toolbar { align-items: flex-start; flex-direction: column; }
+  .calendar-grid { min-width: 700px; }
+  .calendar-card { overflow-x: auto; }
+  .calendar-day { min-height: 100px; }
+  .calendar-week-view .calendar-day { min-height: 350px; }
+}
+
+@media (max-width: 560px) {
+  .calendar-navigation { flex-wrap: wrap; }
+  .calendar-navigation h2 { flex-basis: 100%; margin: 5px 0 0; }
+  .calendar-controls { width: 100%; justify-content: space-between; }
+  .task-form-card { padding: 13px; }
+  .task-filters { width: 100%; }
+  .task-filters > select { flex: 1; min-width: 0; }
+}
