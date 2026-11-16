@@ -25,10 +25,29 @@ function DraggableDeal({ deal, children }) {
 // Mỗi cột nhận card được thả vào và cung cấp stage đích cho DndContext.
 function DealColumn({ column, deals, children }) {
   const { setNodeRef, isOver } = useDroppable({ id: column.id });
-  return <section ref={setNodeRef} className={`deal-column ${isOver ? 'deal-column-over' : ''}`} aria-label={`${column.title}: ${deals.length} Deal`}>
-    <header className="deal-column-header"><h2>{column.title}</h2><span>{deals.length}</span></header>
-    <div className="deal-column-cards">{children}</div>
+  return <section ref={setNodeRef} className={`deal-column deal-column-${column.id.toLowerCase()} ${isOver ? 'deal-column-over' : ''}`} aria-label={`${column.title}: ${deals.length} Deal`}>
+    <header className="deal-column-header"><span className="deal-column-title"><span className="deal-stage-dot" aria-hidden="true" /><h2>{column.title}</h2></span><span className="deal-column-count">{deals.length}</span></header>
+    <div className="deal-column-cards">{children}{!deals.length && <p className="deal-column-empty">Thả Deal vào đây</p>}</div>
   </section>;
+}
+
+function formatDealDate(value) {
+  if (!value) return '';
+  return new Date(`${String(value).slice(0, 10)}T00:00:00`).toLocaleDateString('vi-VN');
+}
+
+function getDealDateBadge(deal) {
+  const isWon = deal.stage === 'WON';
+  const value = isWon ? (deal.closedDate || deal.expectedCloseDate) : deal.expectedCloseDate;
+  if (!value) return { className: 'date-empty', label: 'Chưa có ngày chốt' };
+  if (isWon) return { className: 'date-closed', label: `Đã chốt ${formatDealDate(value)}` };
+
+  const today = new Date();
+  const localToday = new Date(today.getTime() - today.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+  const date = String(value).slice(0, 10);
+  if (date < localToday) return { className: 'date-overdue', label: `Quá hạn ${formatDealDate(value)}` };
+  if (date === localToday) return { className: 'date-today', label: `Chốt hôm nay` };
+  return { className: 'date-upcoming', label: `Dự kiến ${formatDealDate(value)}` };
 }
 
 // Component board quản lý dữ liệu cục bộ để card đổi cột ngay khi thả.
@@ -129,7 +148,9 @@ function DealBoard({ deals: initialDeals, onStageChange }) {
       </>}
       <div className="deal-modal-actions"><button type="button" className="secondary-button" onClick={() => setPendingMove(null)}>Hủy</button><button type="submit" className="primary-button compact">{pendingMove.stage === 'LOST' ? 'Xác nhận LOST' : 'Xác nhận WON'}</button></div>
     </form></div>}
-    <div className="deal-board" aria-label="Bảng Deal gồm năm trạng thái">
+    <section className="deal-board-section" aria-label="Bảng Kanban Deal">
+      <div className="deal-board-heading"><div><span className="eyebrow">SALES PIPELINE</span><h2>Bảng Kanban</h2><p>Kéo thả Deal để cập nhật trạng thái.</p></div><span className="deal-board-total"><strong>{deals.length}</strong> Deal</span></div>
+      <div className="deal-board" aria-label="Bảng Deal gồm năm trạng thái">
       {COLUMNS.map((column) => {
         const columnDeals = deals.filter((deal) => getBoardStage(deal.stage) === column.id);
         return <DealColumn key={column.id} column={column} deals={columnDeals}>
@@ -138,13 +159,14 @@ function DealBoard({ deals: initialDeals, onStageChange }) {
               <div className="deal-card-heading"><strong>{deal.name}</strong><span className="deal-id">#{deal.id}</span></div>
               <div className="deal-customer"><span className="deal-field-label">KHÁCH HÀNG</span><span>{deal.accountName || 'Chưa liên kết khách hàng'}</span></div>
               <div className="deal-amount"><span className="deal-field-label">{deal.stage === 'WON' ? 'GIÁ TRỊ HỢP ĐỒNG' : 'GIÁ TRỊ DEAL'}</span><strong>{Number(deal.closedAmount ?? deal.amount ?? 0).toLocaleString('vi-VN')} {deal.currency || 'VND'}</strong></div>
-              <span className={`deal-date-badge ${deal.expectedCloseDate ? 'date-upcoming' : 'date-empty'}`}>{deal.expectedCloseDate ? `Chốt: ${new Date(`${String(deal.expectedCloseDate).slice(0, 10)}T00:00:00`).toLocaleDateString('vi-VN')}` : 'Chưa có ngày chốt'}</span>
+              <span className={`deal-date-badge ${getDealDateBadge(deal).className}`}>{getDealDateBadge(deal).label}</span>
               <div className="deal-owner"><span className="avatar deal-avatar" aria-hidden="true">{(deal.ownerName || '?').split(/\s+/).filter(Boolean).slice(-2).map((part) => part[0]).join('').toUpperCase()}</span><span><small>Phụ trách</small><strong>{deal.ownerName || 'Chưa phân công'}</strong></span></div>
             </article>
           </DraggableDeal>)}
         </DealColumn>;
       })}
-    </div>
+      </div>
+    </section>
   </DndContext>;
 }
 
