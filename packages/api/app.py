@@ -4,6 +4,7 @@ import json
 import os
 import re
 import secrets
+import sys
 import threading
 import time
 from datetime import date
@@ -26,6 +27,13 @@ from werkzeug.exceptions import HTTPException
 
 ROOT = Path(__file__).resolve().parents[2]
 API_DIR = Path(__file__).resolve().parent
+if str(API_DIR) not in sys.path:
+    sys.path.insert(0, str(API_DIR))
+from gemini_service import (
+    GeminiConfigurationError,
+    GeminiServiceError,
+    generate_account_copilot_brief,
+)
 load_dotenv(API_DIR / ".env")
 load_dotenv(ROOT / ".env", override=False)
 
@@ -746,6 +754,24 @@ def deals_list():
     })
 
 
+@app.get("/api/deals/accounts")
+@auth_required
+def deal_account_options():
+    """Trả Account mà người dùng có thể gắn với Deal theo phạm vi sở hữu."""
+    if g.user["role"] == "Admin":
+        where, values = "", []
+    elif g.user["role"] == "Manager":
+        where, values = " WHERE owner_user_id IN (SELECT id FROM users WHERE role='Sale')", []
+    else:
+        where, values = " WHERE owner_user_id=%s", [g.user["id"]]
+    accounts = query(
+        "SELECT id,name,owner_user_id AS ownerUserId FROM accounts" + where
+        + " ORDER BY name,id LIMIT 500",
+        tuple(values),
+    )
+    return jsonify({"items": accounts})
+
+
 @app.post("/api/deals")
 @auth_required
 def deal_create():
@@ -996,11 +1022,16 @@ def deal_stage_update(id):
     except ValueError as error:
         return json_error(str(error), 400)
 
+    # Kanban cho phép chỉnh lại trạng thái theo cả hai chiều; WON/LOST cũng
+    # có thể được mở lại, đồng thời closed/lost fields sẽ được làm mới.
+    stage_options = {"PROSPECTING", "PROPOSAL", "NEGOTIATION", "WON", "LOST"}
     transitions = {
-        "PROSPECTING": {"PROPOSAL"}, "QUALIFICATION": {"PROPOSAL"},
-        "PROPOSAL": {"PROSPECTING", "NEGOTIATION"},
-        "NEGOTIATION": {"PROPOSAL", "WON", "LOST"},
-        "WON": set(), "LOST": set(),
+        "PROSPECTING": stage_options - {"PROSPECTING"},
+        "QUALIFICATION": stage_options - {"QUALIFICATION"},
+        "PROPOSAL": stage_options - {"PROPOSAL"},
+        "NEGOTIATION": stage_options - {"NEGOTIATION"},
+        "WON": stage_options - {"WON"},
+        "LOST": stage_options - {"LOST"},
     }
 
     def change_stage(cursor):
@@ -2488,7 +2519,16 @@ def contact_delete(contact_id):
         return json_error(str(error), 400)
     if not can_access_customer(g.user, "contacts", parsed_id):
         return json_error("Không tìm thấy Contact.", 404)
-    execute("DELETE FROM contacts WHERE id=%s", (parsed_id,))
+    try:
+        execute("DELETE FROM contacts WHERE id=%s", (parsed_id,))
+    except IntegrityError as error:
+        if error.errno == errorcode.ER_ROW_IS_REFERENCED_2:
+            return json_error(
+                "Không thể xóa Contact đang được Deal, Task hoặc lịch hẹn sử dụng.",
+                409,
+                code="CONTACT_IN_USE",
+            )
+        raise
     return "", 204
 
 
@@ -2529,6 +2569,66 @@ def customer_account_detail(account_id):
         activity_values,
     )
     return jsonify({"account": account_rows[0], "contacts": contacts, "deals": deals, "activities": activities})
+
+
+@app.post("/api/customers/accounts/<account_id>/gemini-summary")
+@auth_required
+def customer_account_gemini_summary(account_id):
+    """Phân tích dữ liệu Customer 360 với Gemini API để đưa ra tóm tắt và khuyến nghị chiến lược."""
+    try:
+        parsed_id = positive_id(account_id)
+    except ValueError:
+        return json_error("ID khách hàng không hợp lệ.", 400)
+    if not can_access_customer(g.user, "accounts", parsed_id):
+        return json_error("Không tìm thấy khách hàng.", 404)
+
+    account_rows = query(
+        "SELECT a.id,a.name,a.industry,a.website,a.phone,a.email,a.billing_address AS billingAddress,"
+        "a.owner_user_id AS ownerUserId,u.name AS ownerName,a.created_at AS createdAt "
+        "FROM accounts a INNER JOIN users u ON u.id=a.owner_user_id WHERE a.id=%s",
+        (parsed_id,),
+    )
+    if not account_rows:
+        return json_error("Không tìm thấy khách hàng.", 404)
+
+    sale_filter = " AND owner_user_id=%s" if g.user["role"] != "Admin" else ""
+    sale_values = (parsed_id, g.user["id"]) if sale_filter else (parsed_id,)
+    contacts = query(
+        "SELECT id,first_name AS firstName,last_name AS lastName,email,phone,job_title AS jobTitle "
+        "FROM contacts WHERE account_id=%s" + sale_filter + " ORDER BY last_name,first_name",
+        sale_values,
+    )
+    deals = query(
+        "SELECT id,name,amount,currency,stage,probability,expected_close_date AS expectedCloseDate "
+        "FROM deals WHERE account_id=%s" + sale_filter + " ORDER BY updated_at DESC LIMIT 20",
+        sale_values,
+    )
+    activity_filter = " AND user_id=%s" if g.user["role"] != "Admin" else ""
+    activity_values = (parsed_id, g.user["id"]) if activity_filter else (parsed_id,)
+    activities = query(
+        "SELECT id,activity_type AS type,subject,details,occurred_at AS occurredAt FROM activities "
+        "WHERE account_id=%s" + activity_filter + " ORDER BY occurred_at DESC LIMIT 30",
+        activity_values,
+    )
+
+    body = request.get_json(silent=True) or {}
+    custom_instructions = clean_text(body.get("instructions", ""), "Yêu cầu thêm", 500) if body.get("instructions") else None
+
+    try:
+        brief = generate_account_copilot_brief(
+            account=account_rows[0],
+            contacts=contacts,
+            deals=deals,
+            activities=activities,
+            custom_instructions=custom_instructions,
+        )
+        return jsonify({"summary": brief})
+    except GeminiConfigurationError as err:
+        return json_error(str(err), 400, code="GEMINI_NOT_CONFIGURED")
+    except GeminiServiceError as err:
+        return json_error(str(err), 502, code="GEMINI_API_ERROR")
+    except Exception as err:
+        return json_error(f"Không thể phân tích dữ liệu: {str(err)}", 500)
 
 
 @app.get("/styles.css")
