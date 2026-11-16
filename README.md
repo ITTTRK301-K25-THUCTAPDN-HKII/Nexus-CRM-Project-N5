@@ -9,7 +9,7 @@ and JavaScript for the interface. MySQL stores application data.
 - MySQL Server 8.0 or newer
 - Windows PowerShell (commands below use Windows paths)
 
-Node.js and npm are not required to run this version of the project. The Deal board's React and DnD Kit code is already bundled in `apps/web/static/deal-board.js`. Node.js and npm are needed only when rebuilding that bundle after editing its source.
+Node.js and npm are not required to run this version of the project. The Deal board's React and DnD Kit code is already bundled in `apps/web/static/deal-board.js`, and the browser loads that bundle only when the Deal page is opened. Node.js and npm are needed only when rebuilding that bundle after editing its source.
 
 ## 1. Prepare MySQL
 
@@ -33,6 +33,10 @@ Node.js and npm are not required to run this version of the project. The Deal bo
 6. For an existing database, run
    `packages/api/sql/migrations/006_task_telegram_notifications.sql` once to add
    Telegram Chat IDs and retry tracking. New databases already have these fields.
+7. For an existing database created before recurring appointments, check that
+   `appointment_series` and `appointments.recurrence_series_id` exist. If both
+   are missing, run `packages/api/sql/migrations/007_appointment_recurrence.sql`
+   once. New databases already include recurring appointment support.
 
 ## 2. Configure the database connection
 
@@ -54,6 +58,24 @@ Set `TELEGRAM_BOT_TOKEN` in `.env` and set each Sale user's
 The app scans every five minutes for open tasks due in 15–30 minutes. It tries
 each alert at most three times and records successful sends in
 `tasks.telegram_notified_at`.
+
+## Customer 360° Gemini AI Copilot
+
+Nexus CRM tích hợp Google Gemini API (`google-genai` SDK) để cung cấp trợ lý chiến lược thông minh trên màn hình chi tiết khách hàng (**Customer 360°**):
+- **Đánh giá sức khỏe quan hệ khách hàng**: Tính toán điểm số (0-100) và trạng thái (Xuất sắc, Tích cực, Cần chú ý, Nguy cơ) dựa trên hồ sơ, liên hệ, cơ hội Deal và lịch sử tương tác.
+- **Tóm tắt điều hành & Điểm nhấn**: Tóm lược nhanh hiện trạng và các thông tin then chốt trước khi gặp khách hàng.
+- **Phân tích Rủi ro & Cơ hội phát triển**: Nhận diện nguy cơ đình trệ và tiềm năng mở rộng doanh thu (upsell/cross-sell).
+- **Đề xuất hành động (Next Best Actions) với 1-click tạo Task**: Cho phép nhân viên kinh doanh chuyển trực tiếp các hành động gợi ý thành công việc (Tasks) trong CRM.
+- **Soạn thảo Email cá nhân hóa**: Tạo sẵn mẫu email tiếp cận/chăm sóc khách hàng tự nhiên kèm nút sao chép nhanh 1 chạm.
+
+### Cấu hình Gemini API:
+1. Nhận khóa API miễn phí từ [Google AI Studio](https://aistudio.google.com/).
+2. Thêm vào file `.env`:
+   ```env
+   GEMINI_API_KEY=your_gemini_api_key_here
+   GEMINI_MODEL=gemini-4-hydrogen
+   ```
+   *(Mặc định sử dụng model `gemini-4-hydrogen`; bạn cũng có thể tùy chỉnh sang `gemini-3.5-flash-lite` hoặc các model Gemini thế hệ mới khác).*
 
 ## 3. Install Python dependencies
 

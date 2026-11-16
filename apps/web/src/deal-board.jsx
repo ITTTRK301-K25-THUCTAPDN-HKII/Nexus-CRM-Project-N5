@@ -27,7 +27,7 @@ function getBoardStage(stage) {
 function DraggableDeal({ deal, children }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: String(deal.id) });
   const style = transform ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)` } : undefined;
-  return <div ref={setNodeRef} style={style} className={isDragging ? 'deal-dragging' : ''} {...listeners} {...attributes}>{children}</div>;
+  return <div ref={setNodeRef} style={style} className={`deal-draggable ${isDragging ? 'deal-dragging' : ''}`} {...listeners} {...attributes}>{children}</div>;
 }
 
 // Mỗi cột nhận card được thả vào và cung cấp stage đích cho DndContext.
@@ -40,7 +40,7 @@ function DealColumn({ column, deals, children }) {
 }
 
 // Component board quản lý dữ liệu cục bộ để card đổi cột ngay khi thả.
-function DealBoard({ deals: initialDeals, onStageChange, onHistory }) {
+function DealBoard({ deals: initialDeals, onStageChange, onHistory, onDelete }) {
   const [deals, setDeals] = useState(initialDeals);
   const [toast, setToast] = useState(null);
   const [pendingMove, setPendingMove] = useState(null);
@@ -49,6 +49,8 @@ function DealBoard({ deals: initialDeals, onStageChange, onHistory }) {
   const [historyEntries, setHistoryEntries] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState('');
+  const [pendingDelete, setPendingDelete] = useState(null);
+  const [deleting, setDeleting] = useState(false);
   const historyRequest = useRef(0);
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
@@ -120,6 +122,22 @@ function DealBoard({ deals: initialDeals, onStageChange, onHistory }) {
     }
   }
 
+  async function confirmDelete() {
+    if (!pendingDelete || deleting) return;
+    const target = pendingDelete;
+    setDeleting(true);
+    try {
+      await onDelete(target);
+      setDeals((current) => current.filter((item) => String(item.id) !== String(target.id)));
+      setPendingDelete(null);
+      setToast({ id: Date.now(), text: `Đã xóa Deal “${target.name}”.`, success: true });
+    } catch (error) {
+      setToast({ id: Date.now(), text: error.message || 'Không thể xóa Deal.' });
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   function closeHistory() {
     historyRequest.current += 1;
     setHistoryDeal(null);
@@ -151,7 +169,7 @@ function DealBoard({ deals: initialDeals, onStageChange, onHistory }) {
   }, [toast]);
 
   return <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
-    {toast && <div key={toast.id} className="deal-toast" role="alert" aria-live="assertive"><span className="deal-toast-mark">!</span><span>{toast.text}</span><button type="button" aria-label="Đóng thông báo" onClick={() => setToast(null)}>×</button></div>}
+    {toast && <div key={toast.id} className={`deal-toast ${toast.success ? 'deal-toast-success' : ''}`} role={toast.success ? 'status' : 'alert'} aria-live={toast.success ? 'polite' : 'assertive'}><span className="deal-toast-mark">{toast.success ? '✓' : '!'}</span><span>{toast.text}</span><button type="button" aria-label="Đóng thông báo" onClick={() => setToast(null)}>×</button></div>}
     {pendingMove && <div className="deal-modal-backdrop"><form className="deal-confirm-modal" role="dialog" aria-modal="true" aria-labelledby="deal-modal-title" onSubmit={confirmMove}>
       <button type="button" className="deal-modal-close" aria-label="Đóng" onClick={() => setPendingMove(null)}>×</button>
       <span className="eyebrow">XÁC NHẬN CẬP NHẬT DEAL</span>
@@ -164,6 +182,15 @@ function DealBoard({ deals: initialDeals, onStageChange, onHistory }) {
       </>}
       <div className="deal-modal-actions"><button type="button" className="secondary-button" onClick={() => setPendingMove(null)}>Hủy</button><button type="submit" className="primary-button compact">{pendingMove.stage === 'LOST' ? 'Xác nhận LOST' : 'Xác nhận WON'}</button></div>
     </form></div>}
+    {pendingDelete && <div className="deal-modal-backdrop" onClick={(event) => {
+      if (event.target === event.currentTarget && !deleting) setPendingDelete(null);
+    }}><section className="deal-confirm-modal" role="dialog" aria-modal="true" aria-labelledby="deal-delete-title">
+      <button type="button" className="deal-modal-close" aria-label="Đóng" disabled={deleting} onClick={() => setPendingDelete(null)}>×</button>
+      <span className="eyebrow">XÁC NHẬN XÓA</span><h2 id="deal-delete-title">Xóa Deal này?</h2>
+      <p className="muted"><strong>{pendingDelete.name}</strong> · #{pendingDelete.id}</p>
+      <p className="deal-modal-hint">Deal đang được dùng trong Báo giá sẽ không thể xóa.</p>
+      <div className="deal-modal-actions"><button type="button" className="secondary-button" disabled={deleting} onClick={() => setPendingDelete(null)}>Hủy</button><button type="button" className="btn-confirm-delete" disabled={deleting} onClick={() => void confirmDelete()}>{deleting ? 'Đang xóa...' : 'Xóa Deal'}</button></div>
+    </section></div>}
     {historyDeal && <div className="deal-modal-backdrop" onClick={(event) => {
       if (event.target === event.currentTarget) closeHistory();
     }}>
@@ -198,21 +225,31 @@ function DealBoard({ deals: initialDeals, onStageChange, onHistory }) {
             </div> : <p className="empty-state">Deal chưa có lịch sử thay đổi.</p>}
       </section>
     </div>}
+    <p className="deal-board-guidance"><span aria-hidden="true">↔</span> Kéo thẻ Deal sang cột khác theo cả hai chiều để đổi hoặc mở lại trạng thái. Thành công/Thất bại cần thông tin xác nhận.</p>
     <div className="deal-board" aria-label="Bảng Deal gồm năm trạng thái">
       {COLUMNS.map((column) => {
         const columnDeals = deals.filter((deal) => getBoardStage(deal.stage) === column.id);
         return <DealColumn key={column.id} column={column} deals={columnDeals}>
           {columnDeals.map((deal) => <DraggableDeal key={deal.id} deal={deal}>
             <article className="deal-card">
-              <div className="deal-card-heading"><strong>{deal.name}</strong><span className="deal-id">#{deal.id}</span></div>
+              <div className="deal-card-heading"><strong>{deal.name}</strong><span className="deal-card-grip" aria-hidden="true" title="Kéo thẻ để đổi trạng thái">⠿ Kéo</span><span className="deal-id">#{deal.id}</span></div>
+              <div className="deal-card-status-row"><span className={`deal-stage-badge stage-${getBoardStage(deal.stage).toLowerCase()}`}>{STAGE_NAMES[deal.stage] || deal.stage}</span><span className="deal-probability-label">{Number(deal.probability || 0)}% thành công</span></div>
               <div className="deal-customer"><span className="deal-field-label">KHÁCH HÀNG</span><span>{deal.accountName || 'Chưa liên kết khách hàng'}</span></div>
+              {deal.contactName ? <div className="deal-contact"><span className="deal-field-label">NGƯỜI LIÊN HỆ</span><span>{deal.contactName}</span></div> : null}
               <div className="deal-amount"><span className="deal-field-label">{deal.stage === 'WON' ? 'GIÁ TRỊ HỢP ĐỒNG' : 'GIÁ TRỊ DEAL'}</span><strong>{Number(deal.closedAmount ?? deal.amount ?? 0).toLocaleString('vi-VN')} {deal.currency || 'VND'}</strong></div>
+              <div className="deal-probability-track" role="progressbar" aria-label="Xác suất thành công" aria-valuenow={Number(deal.probability || 0)} aria-valuemin="0" aria-valuemax="100"><span style={{ width: `${Math.min(100, Math.max(0, Number(deal.probability) || 0))}%` }} /></div>
               <span className={`deal-date-badge ${deal.expectedCloseDate ? 'date-upcoming' : 'date-empty'}`}>{deal.expectedCloseDate ? `Chốt: ${new Date(`${String(deal.expectedCloseDate).slice(0, 10)}T00:00:00`).toLocaleDateString('vi-VN')}` : 'Chưa có ngày chốt'}</span>
               <div className="deal-owner"><span className="avatar deal-avatar" aria-hidden="true">{(deal.ownerName || '?').split(/\s+/).filter(Boolean).slice(-2).map((part) => part[0]).join('').toUpperCase()}</span><span><small>Phụ trách</small><strong>{deal.ownerName || 'Chưa phân công'}</strong></span></div>
-              <button type="button" className="text-button deal-history-button" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => {
-                event.stopPropagation();
-                void openHistory(deal);
-              }}>Xem lịch sử</button>
+              <div className="deal-card-actions">
+                <button type="button" className="text-button deal-history-button" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => {
+                  event.stopPropagation();
+                  void openHistory(deal);
+                }}>Xem lịch sử</button>
+                <button type="button" className="text-button deal-delete-button" onPointerDown={(event) => event.stopPropagation()} onClick={(event) => {
+                  event.stopPropagation();
+                  setPendingDelete(deal);
+                }}>Xóa</button>
+              </div>
             </article>
           </DraggableDeal>)}
         </DealColumn>;
