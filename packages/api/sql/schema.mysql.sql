@@ -198,7 +198,10 @@ CREATE TABLE IF NOT EXISTS quotes (
   currency CHAR(3) NOT NULL DEFAULT 'USD',
   valid_until DATE NULL,
   subtotal DECIMAL(15,2) NOT NULL DEFAULT 0.00,
+  discount_amount DECIMAL(15,2) NOT NULL DEFAULT 0.00,
+  vat_rate DECIMAL(5,2) NOT NULL DEFAULT 10.00,
   tax_amount DECIMAL(15,2) NOT NULL DEFAULT 0.00,
+  grand_total DECIMAL(15,2) NOT NULL DEFAULT 0.00,
   total_amount DECIMAL(15,2) NOT NULL DEFAULT 0.00,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -208,7 +211,10 @@ CREATE TABLE IF NOT EXISTS quotes (
   KEY idx_quotes_account (account_id),
   KEY idx_quotes_creator (created_by_user_id),
   KEY idx_quotes_approval (approval_status,approval_requested_at),
-  CONSTRAINT chk_quotes_amounts CHECK (subtotal >= 0 AND tax_amount >= 0 AND total_amount >= 0),
+  CONSTRAINT chk_quotes_amounts CHECK (
+    subtotal >= 0 AND discount_amount >= 0 AND vat_rate >= 0 AND vat_rate <= 999.99
+    AND tax_amount >= 0 AND grand_total >= 0 AND total_amount >= 0
+  ),
   CONSTRAINT fk_quotes_deal FOREIGN KEY (deal_id) REFERENCES deals(id)
     ON UPDATE CASCADE ON DELETE RESTRICT,
   CONSTRAINT fk_quotes_account FOREIGN KEY (account_id) REFERENCES accounts(id)

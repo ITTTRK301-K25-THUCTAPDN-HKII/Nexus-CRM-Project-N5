@@ -1,6 +1,7 @@
 import sys
 import unittest
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
 from unittest.mock import patch
 
@@ -82,6 +83,79 @@ class QuoteApiTests(unittest.TestCase):
             "discountPercent": "0.00",
             "lineTotal": "100.00",
         }], []
+
+    def test_create_quote_uses_decimal_math_and_persists_all_totals(self):
+        sale = self.authenticate()
+
+        class FakeCursor:
+            def __init__(self):
+                self.statements = []
+                self.lastrowid = 55
+
+            def execute(self, statement, values):
+                self.statements.append((statement, values))
+
+            def fetchone(self):
+                statement = self.statements[-1][0]
+                if "FROM deals" in statement:
+                    return {"id": 4, "account_id": 6, "owner_user_id": 8, "currency": "USD"}
+                if "FROM products" in statement:
+                    return {"id": 9, "sku": "SVC-1", "name": "CRM implementation",
+                            "unit_price": Decimal("19.99"), "currency": "USD", "is_active": 1}
+                return None
+
+        cursor = FakeCursor()
+        response_quote = self.quote(
+            subtotal="59.97", discountAmount="6.00", vatRate="10.00",
+            taxAmount="5.40", grandTotal="59.37", totalAmount="59.37",
+        )
+        with patch.object(api, "get_user", return_value=sale), patch.object(
+            api, "transaction", side_effect=lambda work: work(cursor)
+        ), patch.object(api, "quote_detail", return_value={"quote": response_quote, "items": [], "history": []}):
+            response = self.client.post("/api/quotes", json={
+                "dealId": 4,
+                "vatRate": 10,
+                "items": [{"productId": 9, "quantity": 3, "discountPercent": 10}],
+            })
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json["quote"]["grandTotal"], "59.37")
+        insert_quote = next(values for statement, values in cursor.statements if statement.startswith("INSERT INTO quotes"))
+        self.assertEqual(insert_quote[6:12], (
+            Decimal("59.97"), Decimal("6.00"), Decimal("10.00"),
+            Decimal("5.40"), Decimal("59.37"), Decimal("59.37"),
+        ))
+        insert_item = next(values for statement, values in cursor.statements if statement.startswith("INSERT INTO quote_items"))
+        self.assertEqual(insert_item[3:], (Decimal("3.000"), Decimal("19.99"), Decimal("10.00"), Decimal("53.97")))
+
+    def test_create_quote_rejects_invalid_vat_rate_before_database_access(self):
+        sale = self.authenticate()
+        with patch.object(api, "get_user", return_value=sale), patch.object(api, "transaction") as transaction:
+            response = self.client.post("/api/quotes", json={
+                "dealId": 4, "vatRate": 1000,
+                "items": [{"productId": 9, "quantity": 1}],
+            })
+        self.assertEqual(response.status_code, 400)
+        transaction.assert_not_called()
+
+    def test_create_quote_hides_deals_outside_user_scope(self):
+        sale = self.authenticate()
+
+        class FakeCursor:
+            def execute(self, _statement, _values):
+                pass
+
+            def fetchone(self):
+                return None
+
+        cursor = FakeCursor()
+        with patch.object(api, "get_user", return_value=sale), patch.object(
+            api, "transaction", side_effect=lambda work: work(cursor)
+        ):
+            response = self.client.post("/api/quotes", json={
+                "dealId": 4, "items": [{"productId": 9, "quantity": 1}],
+            })
+        self.assertEqual(response.status_code, 404)
 
     def test_quote_list_is_scoped_and_can_filter_approval_status(self):
         sale = self.authenticate()
