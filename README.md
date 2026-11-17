@@ -37,6 +37,9 @@ Node.js and npm are not required to run this version of the project. The Deal bo
    `appointment_series` and `appointments.recurrence_series_id` exist. If both
    are missing, run `packages/api/sql/migrations/007_appointment_recurrence.sql`
    once. New databases already include recurring appointment support.
+8. For an existing database created before quote decimal totals, run
+   `packages/api/sql/migrations/009_quote_decimal_totals.sql` once. New databases
+   already include discount, VAT rate and grand total fields.
 
 ## 2. Configure the database connection
 

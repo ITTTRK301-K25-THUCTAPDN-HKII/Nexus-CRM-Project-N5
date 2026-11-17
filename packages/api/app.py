@@ -10,7 +10,7 @@ import threading
 import time
 from datetime import date
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from functools import wraps
 from pathlib import Path
 from urllib.parse import quote
@@ -2129,8 +2129,10 @@ QUOTE_SELECT = (
     "q.status,q.approval_status AS approvalStatus,q.approval_requested_at AS approvalRequestedAt,"
     "q.approval_decided_at AS approvalDecidedAt,q.approval_decided_by_user_id AS approvalDecidedByUserId,"
     "approver.name AS approvalDecidedByName,q.approval_note AS approvalNote,"
-    "q.currency,q.valid_until AS validUntil,q.subtotal,q.tax_amount AS taxAmount,"
-    "q.total_amount AS totalAmount,q.created_at AS createdAt,q.updated_at AS updatedAt "
+    "q.currency,q.valid_until AS validUntil,q.subtotal,"
+    "q.discount_amount AS discountAmount,q.vat_rate AS vatRate,q.tax_amount AS taxAmount,"
+    "q.grand_total AS grandTotal,q.total_amount AS totalAmount,"
+    "q.created_at AS createdAt,q.updated_at AS updatedAt "
     "FROM quotes q INNER JOIN deals d ON d.id=q.deal_id "
     "INNER JOIN accounts a ON a.id=q.account_id "
     "INNER JOIN users creator ON creator.id=q.created_by_user_id "
@@ -2197,6 +2199,164 @@ def quote_body():
     if any(field not in {"status", "decision", "note"} for field in data):
         raise ValueError("Dữ liệu báo giá chứa trường không hợp lệ.")
     return data
+
+
+QUOTE_MONEY_QUANTUM = Decimal("0.01")
+QUOTE_MAX_AMOUNT = Decimal("9999999999999.99")
+
+
+def quote_decimal(value, field, minimum, maximum, places):
+    if isinstance(value, bool) or value is None:
+        raise ValueError(f"{field} không hợp lệ.")
+    try:
+        number = Decimal(str(value))
+    except (InvalidOperation, ValueError) as error:
+        raise ValueError(f"{field} không hợp lệ.") from error
+    quantum = Decimal(1).scaleb(-places)
+    if not number.is_finite() or number < minimum or number > maximum:
+        raise ValueError(f"{field} phải nằm trong khoảng {minimum} đến {maximum}.")
+    try:
+        rounded = number.quantize(quantum)
+    except InvalidOperation as error:
+        raise ValueError(f"{field} có quá nhiều chữ số thập phân.") from error
+    if rounded != number:
+        raise ValueError(f"{field} chỉ được có tối đa {places} chữ số thập phân.")
+    return rounded
+
+
+def quote_create_payload(data):
+    allowed = {"dealId", "currency", "validUntil", "vatRate", "items"}
+    if any(field not in allowed for field in data):
+        raise ValueError("Dữ liệu báo giá chứa trường không hợp lệ.")
+    if not {"dealId", "items"}.issubset(data):
+        raise ValueError("Báo giá cần có Deal và ít nhất một sản phẩm.")
+    deal_id = positive_id(data["dealId"])
+    items = data["items"]
+    if not isinstance(items, list) or not 1 <= len(items) <= 100:
+        raise ValueError("Báo giá cần có từ 1 đến 100 sản phẩm.")
+    normalized_items = []
+    for index, item in enumerate(items, start=1):
+        if not isinstance(item, dict) or any(field not in {"productId", "quantity", "discountPercent"} for field in item):
+            raise ValueError(f"Dòng sản phẩm {index} không hợp lệ.")
+        if not {"productId", "quantity"}.issubset(item):
+            raise ValueError(f"Dòng sản phẩm {index} cần có sản phẩm và số lượng.")
+        normalized_items.append({
+            "productId": positive_id(item["productId"]),
+            "quantity": quote_decimal(item["quantity"], f"Số lượng dòng {index}", Decimal("0.001"), Decimal("999999999.999"), 3),
+            "discountPercent": quote_decimal(item.get("discountPercent", 0), f"Chiết khấu dòng {index}", Decimal("0"), Decimal("100"), 2),
+        })
+    currency = clean_text(data.get("currency", ""), "Tiền tệ", 3).upper()
+    if currency and not re.fullmatch(r"[A-Z]{3}", currency):
+        raise ValueError("Mã tiền tệ cần gồm đúng 3 chữ cái.")
+    vat_rate = quote_decimal(data.get("vatRate", 10), "Thuế VAT", Decimal("0"), Decimal("999.99"), 2)
+    valid_until = data.get("validUntil")
+    if valid_until not in (None, ""):
+        if not isinstance(valid_until, str):
+            raise ValueError("Ngày hết hạn không hợp lệ.")
+        try:
+            valid_until = date.fromisoformat(valid_until)
+        except ValueError as error:
+            raise ValueError("Ngày hết hạn cần có định dạng YYYY-MM-DD.") from error
+    else:
+        valid_until = None
+    return {
+        "dealId": deal_id,
+        "currency": currency or None,
+        "validUntil": valid_until,
+        "vatRate": vat_rate,
+        "items": normalized_items,
+    }
+
+
+@app.post("/api/quotes")
+@auth_required
+def quote_create():
+    try:
+        data = quote_create_payload(body_object())
+    except ValueError as error:
+        return validation_error([("body", str(error))])
+
+    scope, scope_values = quote_scope(g.user)
+
+    def create(cursor):
+        cursor.execute(
+            "SELECT id,account_id,owner_user_id,currency FROM deals WHERE id=%s" +
+            (f" AND {scope}" if scope else "") + " FOR UPDATE",
+            tuple([data["dealId"]] + scope_values),
+        )
+        deal = cursor.fetchone()
+        if not deal:
+            return {"kind": "not_found"}
+
+        line_items = []
+        subtotal = Decimal("0.00")
+        discount_amount = Decimal("0.00")
+        quote_currency = data["currency"] or deal["currency"]
+        if quote_currency != deal["currency"]:
+            return {"kind": "currency_mismatch"}
+        for item in data["items"]:
+            cursor.execute(
+                "SELECT id,sku,name,unit_price,currency,is_active FROM products WHERE id=%s FOR UPDATE",
+                (item["productId"],),
+            )
+            product = cursor.fetchone()
+            if not product or not product["is_active"]:
+                return {"kind": "product_not_found"}
+            if product["currency"] != quote_currency:
+                return {"kind": "currency_mismatch"}
+            unit_price = Decimal(str(product["unit_price"]))
+            gross = (item["quantity"] * unit_price).quantize(QUOTE_MONEY_QUANTUM, rounding=ROUND_HALF_UP)
+            line_discount = (gross * item["discountPercent"] / Decimal("100")).quantize(
+                QUOTE_MONEY_QUANTUM, rounding=ROUND_HALF_UP
+            )
+            line_total = gross - line_discount
+            if gross > QUOTE_MAX_AMOUNT or subtotal + gross > QUOTE_MAX_AMOUNT:
+                return {"kind": "amount_too_large"}
+            subtotal += gross
+            discount_amount += line_discount
+            line_items.append({
+                **item,
+                "description": product["name"],
+                "unitPrice": unit_price,
+                "lineTotal": line_total,
+            })
+
+        taxable_amount = subtotal - discount_amount
+        tax_amount = (taxable_amount * data["vatRate"] / Decimal("100")).quantize(
+            QUOTE_MONEY_QUANTUM, rounding=ROUND_HALF_UP
+        )
+        grand_total = taxable_amount + tax_amount
+        if grand_total > QUOTE_MAX_AMOUNT:
+            return {"kind": "amount_too_large"}
+        quote_number = f"Q-{date.today():%Y%m%d}-{secrets.token_hex(4).upper()}"
+        cursor.execute(
+            "INSERT INTO quotes (quote_number,deal_id,account_id,created_by_user_id,currency,valid_until,"
+            "subtotal,discount_amount,vat_rate,tax_amount,grand_total,total_amount) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (quote_number, data["dealId"], deal["account_id"], g.user["id"], quote_currency,
+             data["validUntil"], subtotal, discount_amount, data["vatRate"], tax_amount,
+             grand_total, grand_total),
+        )
+        quote_id = cursor.lastrowid
+        for item in line_items:
+            cursor.execute(
+                "INSERT INTO quote_items (quote_id,product_id,description,quantity,unit_price,discount_percent,line_total) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                (quote_id, item["productId"], item["description"], item["quantity"], item["unitPrice"],
+                 item["discountPercent"], item["lineTotal"]),
+            )
+        return {"kind": "created", "quoteId": quote_id}
+
+    result = transaction(create)
+    if result["kind"] == "not_found":
+        return json_error("Không tìm thấy Deal.", 404)
+    if result["kind"] == "product_not_found":
+        return json_error("Không tìm thấy sản phẩm đang hoạt động.", 400)
+    if result["kind"] == "currency_mismatch":
+        return json_error("Đơn vị tiền tệ của sản phẩm không khớp với báo giá.", 400)
+    if result["kind"] == "amount_too_large":
+        return json_error("Tổng tiền vượt quá giới hạn lưu trữ của báo giá.", 400)
+    return jsonify(quote_detail(result["quoteId"], g.user)), 201
 
 
 @app.get("/api/quotes")
