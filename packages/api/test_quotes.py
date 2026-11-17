@@ -44,6 +44,9 @@ class QuoteApiTests(unittest.TestCase):
         row = {
             "id": 21,
             "quoteNumber": "Q-2026-0021",
+            "version": 1,
+            "versionGroupId": 21,
+            "previousVersionId": None,
             "dealId": 4,
             "dealName": "CRM rollout",
             "ownerUserId": 8,
@@ -161,6 +164,112 @@ class QuoteApiTests(unittest.TestCase):
             })
         self.assertEqual(response.status_code, 400)
         transaction.assert_not_called()
+
+    def test_editing_sent_quote_creates_next_version_and_history(self):
+        sale = self.authenticate()
+
+        class FakeCursor:
+            def __init__(self):
+                self.statements = []
+                self.lastrowid = 22
+
+            def execute(self, statement, values):
+                self.statements.append((statement, values))
+
+            def fetchone(self):
+                statement = self.statements[-1][0]
+                if "FROM quotes q INNER JOIN deals" in statement:
+                    return {
+                        "id": 21,
+                        "quote_number": "Q-2026-0021",
+                        "deal_id": 4,
+                        "account_id": 6,
+                        "status": "SENT",
+                        "currency": "USD",
+                        "valid_until": "2026-12-31",
+                        "version": 1,
+                        "version_group_id": 21,
+                    }
+                if "SELECT id,version FROM quotes WHERE version_group_id" in statement:
+                    return {"id": 21, "version": 1}
+                if "SELECT quote_number FROM quotes" in statement:
+                    return {"quote_number": "Q-2026-0021"}
+                if "FROM products" in statement:
+                    return {
+                        "id": 9, "sku": "SVC-1", "name": "CRM implementation",
+                        "unit_price": Decimal("19.99"), "currency": "USD", "is_active": 1,
+                    }
+                return None
+
+        cursor = FakeCursor()
+        next_quote = self.quote(
+            id=22, quoteNumber="Q-2026-0021-V2", version=2,
+            versionGroupId=21, previousVersionId=21, status="DRAFT",
+        )
+        with patch.object(api, "get_user", return_value=sale), patch.object(
+            api, "transaction", side_effect=lambda work: work(cursor)
+        ), patch.object(api, "quote_detail", return_value={"quote": next_quote, "items": [], "history": []}):
+            response = self.client.patch("/api/quotes/21", json={
+                "dealId": 4,
+                "currency": "USD",
+                "validUntil": "2026-12-31",
+                "vatRate": 10,
+                "items": [{"productId": 9, "quantity": 3, "discountPercent": 10}],
+            })
+
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(response.json["quote"]["version"], 2)
+        self.assertEqual(response.json["quote"]["previousVersionId"], 21)
+        insert_quote = next(values for statement, values in cursor.statements if statement.startswith("INSERT INTO quotes"))
+        self.assertEqual(insert_quote[:4], ("Q-2026-0021-V2", 2, 21, 21))
+        self.assertTrue(any(
+            statement.startswith("INSERT INTO quote_history")
+            and values[2:4] == ("1", "2")
+            for statement, values in cursor.statements
+        ))
+        self.assertFalse(any(
+            statement.startswith("UPDATE quotes SET currency")
+            for statement, _ in cursor.statements
+        ))
+
+    def test_editing_draft_quote_updates_without_cloning(self):
+        sale = self.authenticate()
+
+        class FakeCursor:
+            def __init__(self):
+                self.statements = []
+                self.lastrowid = 21
+
+            def execute(self, statement, values):
+                self.statements.append((statement, values))
+
+            def fetchone(self):
+                statement = self.statements[-1][0]
+                if "FROM quotes q INNER JOIN deals" in statement:
+                    return {
+                        "id": 21, "quote_number": "Q-2026-0021", "deal_id": 4,
+                        "account_id": 6, "status": "DRAFT", "currency": "USD",
+                        "valid_until": "2026-12-31", "version": 1, "version_group_id": 21,
+                    }
+                if "FROM products" in statement:
+                    return {
+                        "id": 9, "sku": "SVC-1", "name": "CRM implementation",
+                        "unit_price": Decimal("19.99"), "currency": "USD", "is_active": 1,
+                    }
+                return None
+
+        cursor = FakeCursor()
+        with patch.object(api, "get_user", return_value=sale), patch.object(
+            api, "transaction", side_effect=lambda work: work(cursor)
+        ), patch.object(api, "quote_detail", return_value={"quote": self.quote(), "items": [], "history": []}):
+            response = self.client.patch("/api/quotes/21", json={
+                "dealId": 4, "currency": "USD", "validUntil": "2026-12-31", "vatRate": 10,
+                "items": [{"productId": 9, "quantity": 2, "discountPercent": 0}],
+            })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(any(statement.startswith("UPDATE quotes SET currency") for statement, _ in cursor.statements))
+        self.assertFalse(any(statement.startswith("INSERT INTO quotes") for statement, _ in cursor.statements))
 
     def test_create_quote_hides_deals_outside_user_scope(self):
         sale = self.authenticate()

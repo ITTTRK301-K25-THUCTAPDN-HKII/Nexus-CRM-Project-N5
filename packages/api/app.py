@@ -2122,7 +2122,8 @@ def product_delete(product_id):
 
 
 QUOTE_SELECT = (
-    "SELECT q.id,q.quote_number AS quoteNumber,q.deal_id AS dealId,d.name AS dealName,"
+    "SELECT q.id,q.quote_number AS quoteNumber,q.version,q.version_group_id AS versionGroupId,"
+    "q.previous_version_id AS previousVersionId,q.deal_id AS dealId,d.name AS dealName,"
     "d.owner_user_id AS ownerUserId,q.account_id AS accountId,a.name AS accountName,"
     "a.email AS accountEmail,a.phone AS accountPhone,a.billing_address AS accountAddress,"
     "q.created_by_user_id AS createdByUserId,creator.name AS createdByName,"
@@ -2338,6 +2339,7 @@ def quote_create():
              grand_total, grand_total),
         )
         quote_id = cursor.lastrowid
+        cursor.execute("UPDATE quotes SET version_group_id=%s WHERE id=%s", (quote_id, quote_id))
         for item in line_items:
             cursor.execute(
                 "INSERT INTO quote_items (quote_id,product_id,description,quantity,unit_price,discount_percent,line_total) "
@@ -2357,6 +2359,149 @@ def quote_create():
     if result["kind"] == "amount_too_large":
         return json_error("Tổng tiền vượt quá giới hạn lưu trữ của báo giá.", 400)
     return jsonify(quote_detail(result["quoteId"], g.user)), 201
+
+
+@app.patch("/api/quotes/<quote_id>")
+@app.put("/api/quotes/<quote_id>")
+@auth_required
+def quote_update(quote_id):
+    """Edit a draft in place or create a new draft version from a sent quote."""
+    try:
+        parsed_id = positive_id(quote_id)
+        data = quote_create_payload(body_object())
+    except ValueError as error:
+        return validation_error([("body", str(error))])
+
+    scope, scope_values = quote_scope(g.user)
+
+    def update(cursor):
+        where = " WHERE q.id=%s" + (f" AND {scope}" if scope else "")
+        cursor.execute(
+            "SELECT q.id,q.quote_number,q.deal_id,q.account_id,q.status,q.currency,q.valid_until,"
+            "q.version,q.version_group_id FROM quotes q INNER JOIN deals d ON d.id=q.deal_id" + where + " FOR UPDATE",
+            tuple([parsed_id] + scope_values),
+        )
+        quote = cursor.fetchone()
+        if not quote:
+            return {"kind": "not_found"}
+        if quote["deal_id"] != data["dealId"]:
+            return {"kind": "deal_immutable"}
+        if quote["status"] not in ("DRAFT", "SENT"):
+            return {"kind": "not_editable"}
+
+        quote_currency = data["currency"] or quote["currency"]
+        if quote_currency != quote["currency"]:
+            return {"kind": "currency_mismatch"}
+        line_items = []
+        subtotal = Decimal("0.00")
+        discount_amount = Decimal("0.00")
+        for item in data["items"]:
+            cursor.execute(
+                "SELECT id,sku,name,unit_price,currency,is_active FROM products WHERE id=%s FOR UPDATE",
+                (item["productId"],),
+            )
+            product = cursor.fetchone()
+            if not product or not product["is_active"]:
+                return {"kind": "product_not_found"}
+            if product["currency"] != quote_currency:
+                return {"kind": "currency_mismatch"}
+            unit_price = Decimal(str(product["unit_price"]))
+            gross = (item["quantity"] * unit_price).quantize(QUOTE_MONEY_QUANTUM, rounding=ROUND_HALF_UP)
+            line_discount = (gross * item["discountPercent"] / Decimal("100")).quantize(
+                QUOTE_MONEY_QUANTUM, rounding=ROUND_HALF_UP
+            )
+            if gross > QUOTE_MAX_AMOUNT or subtotal + gross > QUOTE_MAX_AMOUNT:
+                return {"kind": "amount_too_large"}
+            subtotal += gross
+            discount_amount += line_discount
+            line_items.append({
+                **item,
+                "description": product["name"],
+                "unitPrice": unit_price,
+                "lineTotal": gross - line_discount,
+            })
+
+        taxable_amount = subtotal - discount_amount
+        tax_amount = (taxable_amount * data["vatRate"] / Decimal("100")).quantize(
+            QUOTE_MONEY_QUANTUM, rounding=ROUND_HALF_UP
+        )
+        grand_total = taxable_amount + tax_amount
+        if grand_total > QUOTE_MAX_AMOUNT:
+            return {"kind": "amount_too_large"}
+
+        if quote["status"] == "DRAFT":
+            cursor.execute(
+                "UPDATE quotes SET currency=%s,valid_until=%s,subtotal=%s,discount_amount=%s,vat_rate=%s,"
+                "tax_amount=%s,grand_total=%s,total_amount=%s WHERE id=%s",
+                (quote_currency, data["validUntil"], subtotal, discount_amount, data["vatRate"],
+                 tax_amount, grand_total, grand_total, parsed_id),
+            )
+            cursor.execute("DELETE FROM quote_items WHERE quote_id=%s", (parsed_id,))
+            target_quote_id = parsed_id
+            kind = "updated"
+        else:
+            current_version = int(quote["version"] or 1)
+            version_group_id = quote["version_group_id"] or parsed_id
+            cursor.execute(
+                "SELECT id,version FROM quotes WHERE version_group_id=%s ORDER BY version DESC LIMIT 1 FOR UPDATE",
+                (version_group_id,),
+            )
+            latest = cursor.fetchone()
+            if latest and latest["id"] != parsed_id:
+                return {"kind": "stale_version"}
+            next_version = int(latest["version"] if latest else current_version) + 1
+            cursor.execute("SELECT quote_number FROM quotes WHERE id=%s FOR UPDATE", (version_group_id,))
+            root = cursor.fetchone()
+            if not root:
+                return {"kind": "not_found"}
+            quote_number = f"{root['quote_number']}-V{next_version}"
+            if len(quote_number) > 40:
+                return {"kind": "quote_number_too_long"}
+            cursor.execute(
+                "INSERT INTO quotes (quote_number,version,version_group_id,previous_version_id,deal_id,account_id,"
+                "created_by_user_id,status,approval_status,currency,valid_until,subtotal,discount_amount,vat_rate,"
+                "tax_amount,grand_total,total_amount) "
+                "SELECT %s,%s,%s,%s,deal_id,account_id,%s,'DRAFT','NOT_REQUESTED',%s,%s,%s,%s,%s,%s,%s,%s "
+                "FROM quotes WHERE id=%s",
+                (quote_number, next_version, version_group_id, parsed_id, g.user["id"], quote_currency,
+                 data["validUntil"], subtotal, discount_amount, data["vatRate"], tax_amount,
+                 grand_total, grand_total, parsed_id),
+            )
+            target_quote_id = cursor.lastrowid
+            cursor.execute(
+                "INSERT INTO quote_history (quote_id,actor_user_id,event_type,previous_value,new_value,note) "
+                "VALUES (%s,%s,'VERSION_CREATED',%s,%s,%s)",
+                (target_quote_id, g.user["id"], str(current_version), str(next_version),
+                 f"Phiên bản mới được tạo từ báo giá ID {parsed_id}."),
+            )
+            kind = "version_created"
+
+        for item in line_items:
+            cursor.execute(
+                "INSERT INTO quote_items (quote_id,product_id,description,quantity,unit_price,discount_percent,line_total) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                (target_quote_id, item["productId"], item["description"], item["quantity"], item["unitPrice"],
+                 item["discountPercent"], item["lineTotal"]),
+            )
+        return {"kind": kind, "quoteId": target_quote_id}
+
+    result = transaction(update)
+    if result["kind"] == "not_found":
+        return json_error("Không tìm thấy báo giá.", 404)
+    errors = {
+        "deal_immutable": ("Không thể đổi Deal của báo giá hiện có.", 400),
+        "not_editable": ("Chỉ có thể chỉnh sửa báo giá ở trạng thái DRAFT hoặc SENT.", 409),
+        "stale_version": ("Báo giá này đã có phiên bản mới hơn. Hãy chỉnh sửa phiên bản mới nhất.", 409),
+        "product_not_found": ("Không tìm thấy sản phẩm đang hoạt động.", 400),
+        "currency_mismatch": ("Đơn vị tiền tệ của sản phẩm không khớp với báo giá.", 400),
+        "amount_too_large": ("Tổng tiền vượt quá giới hạn lưu trữ của báo giá.", 400),
+        "quote_number_too_long": ("Không thể tạo số phiên bản báo giá trong giới hạn 40 ký tự.", 409),
+    }
+    if result["kind"] in errors:
+        message, status_code = errors[result["kind"]]
+        return json_error(message, status_code)
+    status_code = 201 if result["kind"] == "version_created" else 200
+    return jsonify(quote_detail(result["quoteId"], g.user)), status_code
 
 
 @app.get("/api/quotes")
