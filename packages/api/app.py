@@ -3244,6 +3244,8 @@ def styles():
 @app.get("/customers")
 @app.get("/customers/accounts/<account_id>")
 @app.get("/deals")
+@app.get("/quotes")
+@app.get("/quotes/new")
 @app.get("/tasks")
 @app.get("/calendar")
 @app.get("/workspace")
