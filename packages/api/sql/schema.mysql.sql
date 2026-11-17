@@ -190,6 +190,11 @@ CREATE TABLE IF NOT EXISTS quotes (
   account_id BIGINT UNSIGNED NOT NULL,
   created_by_user_id BIGINT UNSIGNED NOT NULL,
   status ENUM('DRAFT','SENT','ACCEPTED','REJECTED','EXPIRED') NOT NULL DEFAULT 'DRAFT',
+  approval_status ENUM('NOT_REQUESTED','PENDING','APPROVED','REJECTED') NOT NULL DEFAULT 'NOT_REQUESTED',
+  approval_requested_at DATETIME NULL,
+  approval_decided_at DATETIME NULL,
+  approval_decided_by_user_id BIGINT UNSIGNED NULL,
+  approval_note VARCHAR(1000) NULL,
   currency CHAR(3) NOT NULL DEFAULT 'USD',
   valid_until DATE NULL,
   subtotal DECIMAL(15,2) NOT NULL DEFAULT 0.00,
@@ -202,13 +207,16 @@ CREATE TABLE IF NOT EXISTS quotes (
   KEY idx_quotes_deal (deal_id),
   KEY idx_quotes_account (account_id),
   KEY idx_quotes_creator (created_by_user_id),
+  KEY idx_quotes_approval (approval_status,approval_requested_at),
   CONSTRAINT chk_quotes_amounts CHECK (subtotal >= 0 AND tax_amount >= 0 AND total_amount >= 0),
   CONSTRAINT fk_quotes_deal FOREIGN KEY (deal_id) REFERENCES deals(id)
     ON UPDATE CASCADE ON DELETE RESTRICT,
   CONSTRAINT fk_quotes_account FOREIGN KEY (account_id) REFERENCES accounts(id)
     ON UPDATE CASCADE ON DELETE RESTRICT,
   CONSTRAINT fk_quotes_creator FOREIGN KEY (created_by_user_id) REFERENCES users(id)
-    ON UPDATE CASCADE ON DELETE RESTRICT
+    ON UPDATE CASCADE ON DELETE RESTRICT,
+  CONSTRAINT fk_quotes_approver FOREIGN KEY (approval_decided_by_user_id) REFERENCES users(id)
+    ON UPDATE CASCADE ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE IF NOT EXISTS quote_items (
@@ -229,6 +237,23 @@ CREATE TABLE IF NOT EXISTS quote_items (
   CONSTRAINT fk_quote_items_quote FOREIGN KEY (quote_id) REFERENCES quotes(id)
     ON UPDATE CASCADE ON DELETE CASCADE,
   CONSTRAINT fk_quote_items_product FOREIGN KEY (product_id) REFERENCES products(id)
+    ON UPDATE CASCADE ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+CREATE TABLE IF NOT EXISTS quote_history (
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+  quote_id BIGINT UNSIGNED NOT NULL,
+  actor_user_id BIGINT UNSIGNED NULL,
+  event_type ENUM('STATUS_CHANGED','APPROVAL_REQUESTED','APPROVED','APPROVAL_REJECTED') NOT NULL,
+  previous_value VARCHAR(40) NULL,
+  new_value VARCHAR(40) NULL,
+  note VARCHAR(1000) NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (id),
+  KEY idx_quote_history_quote_time (quote_id,created_at),
+  CONSTRAINT fk_quote_history_quote FOREIGN KEY (quote_id) REFERENCES quotes(id)
+    ON UPDATE CASCADE ON DELETE CASCADE,
+  CONSTRAINT fk_quote_history_actor FOREIGN KEY (actor_user_id) REFERENCES users(id)
     ON UPDATE CASCADE ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 

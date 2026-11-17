@@ -1,5 +1,6 @@
 import calendar
 import hashlib
+import io
 import json
 import os
 import re
@@ -22,6 +23,14 @@ from dotenv import load_dotenv
 from flask import Flask, g, jsonify, make_response, render_template, request, send_from_directory
 from flask.json.provider import DefaultJSONProvider
 from mysql.connector import IntegrityError, errorcode
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER, TA_RIGHT
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import mm
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from werkzeug.exceptions import HTTPException
 
 
@@ -2110,6 +2119,437 @@ def product_delete(product_id):
     if result == "referenced":
         return json_error("Không thể xóa sản phẩm đã được sử dụng trong báo giá.", 409, code="PRODUCT_IN_USE")
     return "", 204
+
+
+QUOTE_SELECT = (
+    "SELECT q.id,q.quote_number AS quoteNumber,q.deal_id AS dealId,d.name AS dealName,"
+    "d.owner_user_id AS ownerUserId,q.account_id AS accountId,a.name AS accountName,"
+    "a.email AS accountEmail,a.phone AS accountPhone,a.billing_address AS accountAddress,"
+    "q.created_by_user_id AS createdByUserId,creator.name AS createdByName,"
+    "q.status,q.approval_status AS approvalStatus,q.approval_requested_at AS approvalRequestedAt,"
+    "q.approval_decided_at AS approvalDecidedAt,q.approval_decided_by_user_id AS approvalDecidedByUserId,"
+    "approver.name AS approvalDecidedByName,q.approval_note AS approvalNote,"
+    "q.currency,q.valid_until AS validUntil,q.subtotal,q.tax_amount AS taxAmount,"
+    "q.total_amount AS totalAmount,q.created_at AS createdAt,q.updated_at AS updatedAt "
+    "FROM quotes q INNER JOIN deals d ON d.id=q.deal_id "
+    "INNER JOIN accounts a ON a.id=q.account_id "
+    "INNER JOIN users creator ON creator.id=q.created_by_user_id "
+    "LEFT JOIN users approver ON approver.id=q.approval_decided_by_user_id"
+)
+
+
+class QuotePdfFontError(Exception):
+    pass
+
+
+def quote_scope(user):
+    return deal_scope(user, "d.owner_user_id")
+
+
+def quote_items(quote_id):
+    return query(
+        "SELECT qi.id,qi.product_id AS productId,p.sku,qi.description,qi.quantity,"
+        "qi.unit_price AS unitPrice,qi.discount_percent AS discountPercent,qi.line_total AS lineTotal "
+        "FROM quote_items qi LEFT JOIN products p ON p.id=qi.product_id "
+        "WHERE qi.quote_id=%s ORDER BY qi.id",
+        (quote_id,),
+    )
+
+
+def quote_history(quote_id):
+    return query(
+        "SELECT h.id,h.event_type AS eventType,h.previous_value AS previousValue,"
+        "h.new_value AS newValue,h.note,h.created_at AS createdAt,"
+        "h.actor_user_id AS actorUserId,u.name AS actorName "
+        "FROM quote_history h LEFT JOIN users u ON u.id=h.actor_user_id "
+        "WHERE h.quote_id=%s ORDER BY h.created_at DESC,h.id DESC LIMIT 100",
+        (quote_id,),
+    )
+
+
+def accessible_quote(cursor, quote_id, user, lock=False):
+    scope, values = quote_scope(user)
+    where = " WHERE q.id=%s" + (f" AND {scope}" if scope else "")
+    cursor.execute(
+        "SELECT q.id,q.status,q.approval_status,q.valid_until,d.owner_user_id "
+        "FROM quotes q INNER JOIN deals d ON d.id=q.deal_id" + where
+        + (" FOR UPDATE" if lock else ""),
+        tuple([quote_id] + values),
+    )
+    return cursor.fetchone()
+
+
+def quote_detail(quote_id, user):
+    scope, values = quote_scope(user)
+    where = " WHERE q.id=%s" + (f" AND {scope}" if scope else "")
+    rows = query(QUOTE_SELECT + where, tuple([quote_id] + values))
+    if not rows:
+        return None
+    return {
+        "quote": rows[0],
+        "items": quote_items(quote_id),
+        "history": quote_history(quote_id),
+    }
+
+
+def quote_body():
+    data = body_object()
+    if any(field not in {"status", "decision", "note"} for field in data):
+        raise ValueError("Dữ liệu báo giá chứa trường không hợp lệ.")
+    return data
+
+
+@app.get("/api/quotes")
+@auth_required
+def quotes_list():
+    page, page_size, offset, search = page_options()
+    scope, values = quote_scope(g.user)
+    filters = [scope] if scope else []
+    status = request.args.get("status")
+    if status:
+        if status not in ("DRAFT", "SENT", "ACCEPTED", "REJECTED", "EXPIRED"):
+            return json_error("Trạng thái báo giá không hợp lệ.", 400)
+        filters.append("q.status=%s")
+        values.append(status)
+    approval_status = request.args.get("approvalStatus")
+    if approval_status:
+        if approval_status not in ("NOT_REQUESTED", "PENDING", "APPROVED", "REJECTED"):
+            return json_error("Trạng thái duyệt báo giá không hợp lệ.", 400)
+        filters.append("q.approval_status=%s")
+        values.append(approval_status)
+    deal_id = request.args.get("dealId")
+    if deal_id:
+        try:
+            filters.append("q.deal_id=%s")
+            values.append(positive_id(deal_id))
+        except ValueError as error:
+            return json_error(str(error), 400)
+    if search:
+        filters.append("(q.quote_number LIKE %s OR a.name LIKE %s OR d.name LIKE %s)")
+        values.extend([f"%{search}%", f"%{search}%", f"%{search}%"])
+    where = " WHERE " + " AND ".join(filters) if filters else ""
+    items = query(
+        QUOTE_SELECT + where + " ORDER BY q.created_at DESC,q.id DESC LIMIT %s OFFSET %s",
+        tuple(values + [page_size, offset]),
+    )
+    total = query(
+        "SELECT COUNT(*) AS total FROM quotes q INNER JOIN deals d ON d.id=q.deal_id "
+        "INNER JOIN accounts a ON a.id=q.account_id" + where,
+        tuple(values),
+    )[0]["total"]
+    return jsonify({"quotes": items, "page": page, "pageSize": page_size, "total": total})
+
+
+@app.get("/api/quotes/<quote_id>")
+@auth_required
+def quote_get(quote_id):
+    try:
+        parsed_id = positive_id(quote_id)
+    except ValueError as error:
+        return json_error(str(error), 400)
+    result = quote_detail(parsed_id, g.user)
+    return jsonify(result) if result else json_error("Không tìm thấy báo giá.", 404)
+
+
+@app.post("/api/quotes/<quote_id>/approval-request")
+@auth_required
+def quote_request_approval(quote_id):
+    try:
+        parsed_id = positive_id(quote_id)
+        data = body_object()
+        if data and set(data) != {"note"}:
+            raise ValueError("Yêu cầu duyệt chỉ chấp nhận ghi chú.")
+        note = clean_text(data.get("note", ""), "Ghi chú", 1000) or None
+    except ValueError as error:
+        return validation_error([("body", str(error))])
+
+    def request_approval(cursor):
+        quote = accessible_quote(cursor, parsed_id, g.user, lock=True)
+        if not quote:
+            return "not_found"
+        if quote["status"] != "DRAFT":
+            return "quote_not_draft"
+        if quote["approval_status"] not in ("NOT_REQUESTED", "REJECTED"):
+            return "approval_not_requestable"
+        cursor.execute(
+            "UPDATE quotes SET approval_status='PENDING',approval_requested_at=NOW(),"
+            "approval_decided_at=NULL,approval_decided_by_user_id=NULL,approval_note=%s WHERE id=%s",
+            (note, parsed_id),
+        )
+        cursor.execute(
+            "INSERT INTO quote_history (quote_id,actor_user_id,event_type,previous_value,new_value,note) "
+            "VALUES (%s,%s,'APPROVAL_REQUESTED',%s,'PENDING',%s)",
+            (parsed_id, g.user["id"], quote["approval_status"], note),
+        )
+        return "requested"
+
+    result = transaction(request_approval)
+    errors = {
+        "not_found": ("Không tìm thấy báo giá.", 404),
+        "quote_not_draft": ("Chỉ có thể gửi duyệt báo giá ở trạng thái DRAFT.", 409),
+        "approval_not_requestable": ("Báo giá đang chờ duyệt hoặc đã được duyệt.", 409),
+    }
+    if result in errors:
+        message, status = errors[result]
+        return json_error(message, status)
+    return jsonify(quote_detail(parsed_id, g.user))
+
+
+@app.post("/api/quotes/<quote_id>/approval")
+@roles_required("Admin", "Manager")
+def quote_approval_decide(quote_id):
+    try:
+        parsed_id = positive_id(quote_id)
+        data = quote_body()
+        if not set(data).issubset({"decision", "note"}):
+            raise ValueError("Quyết định duyệt chỉ chấp nhận decision và note.")
+        decision = data.get("decision")
+        if decision not in ("APPROVED", "REJECTED"):
+            raise ValueError("Quyết định duyệt phải là APPROVED hoặc REJECTED.")
+        note = clean_text(data.get("note", ""), "Ghi chú", 1000) or None
+        if decision == "REJECTED" and not note:
+            raise ValueError("Cần ghi lý do khi từ chối duyệt báo giá.")
+    except ValueError as error:
+        return validation_error([("body", str(error))])
+
+    def decide(cursor):
+        quote = accessible_quote(cursor, parsed_id, g.user, lock=True)
+        if not quote:
+            return "not_found"
+        if quote["status"] != "DRAFT":
+            return "quote_not_draft"
+        if quote["approval_status"] != "PENDING":
+            return "not_pending"
+        cursor.execute(
+            "UPDATE quotes SET approval_status=%s,approval_decided_at=NOW(),"
+            "approval_decided_by_user_id=%s,approval_note=%s WHERE id=%s",
+            (decision, g.user["id"], note, parsed_id),
+        )
+        cursor.execute(
+            "INSERT INTO quote_history (quote_id,actor_user_id,event_type,previous_value,new_value,note) "
+            "VALUES (%s,%s,%s,'PENDING',%s,%s)",
+            (
+                parsed_id, g.user["id"],
+                "APPROVED" if decision == "APPROVED" else "APPROVAL_REJECTED",
+                decision, note,
+            ),
+        )
+        return "decided"
+
+    result = transaction(decide)
+    errors = {
+        "not_found": ("Không tìm thấy báo giá.", 404),
+        "quote_not_draft": ("Chỉ có thể duyệt báo giá đang ở trạng thái DRAFT.", 409),
+        "not_pending": ("Báo giá chưa được gửi duyệt hoặc đã có quyết định.", 409),
+    }
+    if result in errors:
+        message, status = errors[result]
+        return json_error(message, status)
+    return jsonify(quote_detail(parsed_id, g.user))
+
+
+@app.patch("/api/quotes/<quote_id>/status")
+@auth_required
+def quote_status_update(quote_id):
+    try:
+        parsed_id = positive_id(quote_id)
+        data = quote_body()
+        if not set(data).issubset({"status", "note"}):
+            raise ValueError("Cập nhật trạng thái chỉ chấp nhận status và note.")
+        status = data.get("status")
+        if status not in ("SENT", "ACCEPTED", "REJECTED", "EXPIRED"):
+            raise ValueError("Trạng thái mới phải là SENT, ACCEPTED, REJECTED hoặc EXPIRED.")
+        note = clean_text(data.get("note", ""), "Ghi chú", 1000) or None
+    except ValueError as error:
+        return validation_error([("body", str(error))])
+
+    def update_status(cursor):
+        quote = accessible_quote(cursor, parsed_id, g.user, lock=True)
+        if not quote:
+            return "not_found"
+        previous = quote["status"]
+        if previous == "DRAFT" and status == "SENT":
+            if quote["approval_status"] != "APPROVED":
+                return "approval_required"
+        elif previous == "SENT" and status in ("ACCEPTED", "REJECTED"):
+            pass
+        elif previous == "SENT" and status == "EXPIRED":
+            if not quote["valid_until"] or quote["valid_until"] >= date.today():
+                return "not_expired"
+        else:
+            return "invalid_transition"
+        cursor.execute("UPDATE quotes SET status=%s WHERE id=%s", (status, parsed_id))
+        cursor.execute(
+            "INSERT INTO quote_history (quote_id,actor_user_id,event_type,previous_value,new_value,note) "
+            "VALUES (%s,%s,'STATUS_CHANGED',%s,%s,%s)",
+            (parsed_id, g.user["id"], previous, status, note),
+        )
+        return "updated"
+
+    result = transaction(update_status)
+    errors = {
+        "not_found": ("Không tìm thấy báo giá.", 404),
+        "approval_required": ("Báo giá cần được duyệt trước khi chuyển sang SENT.", 409),
+        "not_expired": ("Chỉ có thể đánh dấu EXPIRED khi ngày hiệu lực đã qua.", 409),
+        "invalid_transition": ("Không thể chuyển báo giá từ trạng thái hiện tại sang trạng thái này.", 409),
+    }
+    if result in errors:
+        message, status_code = errors[result]
+        return json_error(message, status_code)
+    return jsonify(quote_detail(parsed_id, g.user))
+
+
+def _register_quote_pdf_fonts():
+    regular_name = "NexusQuoteSans"
+    bold_name = "NexusQuoteSans-Bold"
+    registered = set(pdfmetrics.getRegisteredFontNames())
+    if regular_name in registered and bold_name in registered:
+        return regular_name, bold_name
+    font_pairs = (
+        (API_DIR / "fonts" / "NotoSans-Regular.ttf", API_DIR / "fonts" / "NotoSans-Bold.ttf"),
+        (Path("C:/Windows/Fonts/arial.ttf"), Path("C:/Windows/Fonts/arialbd.ttf")),
+        (Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"), Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")),
+        (Path("/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf"), Path("/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf")),
+    )
+    for regular_path, bold_path in font_pairs:
+        if regular_path.is_file() and bold_path.is_file():
+            pdfmetrics.registerFont(TTFont(regular_name, str(regular_path)))
+            pdfmetrics.registerFont(TTFont(bold_name, str(bold_path)))
+            return regular_name, bold_name
+    raise QuotePdfFontError("Không tìm thấy font Unicode để xuất PDF tiếng Việt.")
+
+
+def build_quote_pdf(quote, items):
+    from xml.sax.saxutils import escape
+
+    regular_font, bold_font = _register_quote_pdf_fonts()
+    buffer = io.BytesIO()
+    document = SimpleDocTemplate(
+        buffer, pagesize=A4, rightMargin=16 * mm, leftMargin=16 * mm,
+        topMargin=17 * mm, bottomMargin=18 * mm,
+        title=f"Báo giá {quote['quoteNumber']}",
+        author="Nexus CRM",
+    )
+    styles = getSampleStyleSheet()
+    styles.add(ParagraphStyle(
+        name="QuoteTitle", parent=styles["Title"], fontName=bold_font,
+        fontSize=20, leading=25, textColor=colors.HexColor("#22365a"), alignment=TA_CENTER,
+        spaceAfter=5 * mm,
+    ))
+    styles.add(ParagraphStyle(
+        name="QuoteHeading", parent=styles["Heading2"], fontName=bold_font,
+        fontSize=11, leading=14, textColor=colors.HexColor("#35435c"), spaceBefore=4 * mm,
+    ))
+    styles.add(ParagraphStyle(
+        name="QuoteBody", parent=styles["BodyText"], fontName=regular_font,
+        fontSize=9, leading=13, textColor=colors.HexColor("#35435c"),
+    ))
+    styles.add(ParagraphStyle(
+        name="QuoteSmall", parent=styles["BodyText"], fontName=regular_font,
+        fontSize=8, leading=11, textColor=colors.HexColor("#65728a"),
+    ))
+    styles.add(ParagraphStyle(
+        name="QuoteCell", parent=styles["BodyText"], fontName=regular_font,
+        fontSize=8, leading=10, textColor=colors.HexColor("#35435c"),
+    ))
+    styles.add(ParagraphStyle(
+        name="QuoteCellRight", parent=styles["QuoteCell"], alignment=TA_RIGHT,
+    ))
+    styles.add(ParagraphStyle(
+        name="QuoteTotal", parent=styles["BodyText"], fontName=bold_font,
+        fontSize=10, leading=14, alignment=TA_RIGHT, textColor=colors.HexColor("#22365a"),
+    ))
+
+    def text(value):
+        return escape(str(value if value is not None else "—")).replace("\n", "<br/>")
+
+    def money(value):
+        return f"{Decimal(str(value or 0)):,.2f} {quote['currency']}"
+
+    quote_status_labels = {
+        "DRAFT": "Bản nháp",
+        "SENT": "Đã gửi",
+        "ACCEPTED": "Đã chấp nhận",
+        "REJECTED": "Khách hàng từ chối",
+        "EXPIRED": "Hết hiệu lực",
+    }
+    story = [
+        Paragraph("NEXUS CRM", styles["QuoteSmall"]),
+        Paragraph("BÁO GIÁ", styles["QuoteTitle"]),
+        Paragraph(f"Mã báo giá: <b>{text(quote['quoteNumber'])}</b>", styles["QuoteBody"]),
+        Paragraph(f"Trạng thái báo giá: {text(quote_status_labels.get(quote['status'], quote['status']))}", styles["QuoteBody"]),
+        Paragraph(f"Ngày tạo: {text(quote['createdAt'])} · Hiệu lực đến: {text(quote['validUntil'])}", styles["QuoteBody"]),
+        Spacer(1, 4 * mm),
+        Paragraph("THÔNG TIN KHÁCH HÀNG", styles["QuoteHeading"]),
+        Paragraph(f"<b>{text(quote['accountName'])}</b>", styles["QuoteBody"]),
+        Paragraph(f"Email: {text(quote['accountEmail'])} · Điện thoại: {text(quote['accountPhone'])}", styles["QuoteBody"]),
+        Paragraph(f"Địa chỉ: {text(quote['accountAddress'])}", styles["QuoteBody"]),
+        Paragraph("CƠ HỘI KINH DOANH", styles["QuoteHeading"]),
+        Paragraph(text(quote["dealName"]), styles["QuoteBody"]),
+        Spacer(1, 4 * mm),
+    ]
+    table_data = [[
+        Paragraph("<b>STT</b>", styles["QuoteCell"]),
+        Paragraph("<b>Mô tả</b>", styles["QuoteCell"]),
+        Paragraph("<b>SL</b>", styles["QuoteCellRight"]),
+        Paragraph("<b>Đơn giá</b>", styles["QuoteCellRight"]),
+        Paragraph("<b>CK %</b>", styles["QuoteCellRight"]),
+        Paragraph("<b>Thành tiền</b>", styles["QuoteCellRight"]),
+    ]]
+    for index, item in enumerate(items, 1):
+        description = item["description"]
+        if item.get("sku"):
+            description = f"{item['sku']} · {description}"
+        table_data.append([
+            Paragraph(str(index), styles["QuoteCell"]),
+            Paragraph(text(description), styles["QuoteCell"]),
+            Paragraph(text(item["quantity"]), styles["QuoteCellRight"]),
+            Paragraph(money(item["unitPrice"]), styles["QuoteCellRight"]),
+            Paragraph(text(item["discountPercent"]), styles["QuoteCellRight"]),
+            Paragraph(money(item["lineTotal"]), styles["QuoteCellRight"]),
+        ])
+    table = Table(table_data, colWidths=[10 * mm, 66 * mm, 14 * mm, 30 * mm, 17 * mm, 39 * mm], repeatRows=1)
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#edf1fb")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#35435c")),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#dce2ed")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 5),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    story.extend([
+        table,
+        Spacer(1, 4 * mm),
+        Paragraph(f"Tạm tính: {money(quote['subtotal'])}", styles["QuoteTotal"]),
+        Paragraph(f"Thuế: {money(quote['taxAmount'])}", styles["QuoteTotal"]),
+        Paragraph(f"TỔNG CỘNG: {money(quote['totalAmount'])}", styles["QuoteTotal"]),
+    ])
+    document.build(story)
+    return buffer.getvalue()
+
+
+@app.get("/api/quotes/<quote_id>/pdf")
+@auth_required
+def quote_pdf(quote_id):
+    try:
+        parsed_id = positive_id(quote_id)
+    except ValueError as error:
+        return json_error(str(error), 400)
+    detail = quote_detail(parsed_id, g.user)
+    if not detail:
+        return json_error("Không tìm thấy báo giá.", 404)
+    try:
+        pdf = build_quote_pdf(detail["quote"], detail["items"])
+    except QuotePdfFontError as error:
+        app.logger.error("Không thể xuất PDF báo giá %s: %s", parsed_id, error)
+        return json_error(str(error), 503, code="PDF_FONT_UNAVAILABLE")
+    response = make_response(pdf)
+    response.headers["Content-Type"] = "application/pdf"
+    response.headers["Content-Disposition"] = f'attachment; filename="quote-{parsed_id}.pdf"'
+    response.headers["Content-Length"] = str(len(pdf))
+    return response
 
 
 @app.get("/api/tasks/assignees")
