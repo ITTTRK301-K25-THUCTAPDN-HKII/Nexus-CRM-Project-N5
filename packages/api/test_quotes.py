@@ -128,6 +128,30 @@ class QuoteApiTests(unittest.TestCase):
         insert_item = next(values for statement, values in cursor.statements if statement.startswith("INSERT INTO quote_items"))
         self.assertEqual(insert_item[3:], (Decimal("3.000"), Decimal("19.99"), Decimal("10.00"), Decimal("53.97")))
 
+    def test_quote_item_reads_price_snapshot_after_catalog_price_changes(self):
+        # The product catalog may have a newer price, but quote detail must use
+        # the unit_price stored on the quote_items row.
+        current_product_price = Decimal("29.99")
+        stored_quote_price = Decimal("19.99")
+        row = {
+            "id": 31,
+            "productId": 9,
+            "sku": "SVC-1",
+            "description": "CRM implementation",
+            "quantity": Decimal("1.000"),
+            "unitPrice": stored_quote_price,
+            "discountPercent": Decimal("0.00"),
+            "lineTotal": stored_quote_price,
+            "currentProductPrice": current_product_price,
+        }
+        with patch.object(api, "query", return_value=[row]) as query:
+            items = api.quote_items(21)
+
+        sql = query.call_args.args[0]
+        self.assertIn("qi.unit_price AS unitPrice", sql)
+        self.assertNotIn("p.unit_price", sql)
+        self.assertEqual(items[0]["unitPrice"], Decimal("19.99"))
+
     def test_create_quote_rejects_invalid_vat_rate_before_database_access(self):
         sale = self.authenticate()
         with patch.object(api, "get_user", return_value=sale), patch.object(api, "transaction") as transaction:
