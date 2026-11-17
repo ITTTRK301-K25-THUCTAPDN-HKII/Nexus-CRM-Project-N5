@@ -44,6 +44,9 @@ Node.js and npm are not required to run this version of the project. The Deal bo
 9. For an existing database created before quote decimal totals, run
    `packages/api/sql/migrations/009_quote_decimal_totals.sql` once after migration
    008. New databases already include approval and total fields.
+10. For an existing database created before quote versioning, run
+    `packages/api/sql/migrations/010_quote_versioning.sql` once after migrations
+    008 and 009. New databases already include quote version fields.
 
 ## 2. Configure the database connection
 

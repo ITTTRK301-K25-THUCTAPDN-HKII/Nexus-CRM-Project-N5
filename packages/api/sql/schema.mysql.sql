@@ -186,6 +186,9 @@ CREATE TABLE IF NOT EXISTS products (
 CREATE TABLE IF NOT EXISTS quotes (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   quote_number VARCHAR(40) NOT NULL,
+  version INT UNSIGNED NOT NULL DEFAULT 1,
+  version_group_id BIGINT UNSIGNED NULL,
+  previous_version_id BIGINT UNSIGNED NULL,
   deal_id BIGINT UNSIGNED NOT NULL,
   account_id BIGINT UNSIGNED NOT NULL,
   created_by_user_id BIGINT UNSIGNED NOT NULL,
@@ -207,9 +210,11 @@ CREATE TABLE IF NOT EXISTS quotes (
   updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   CONSTRAINT uq_quotes_number UNIQUE (quote_number),
+  UNIQUE KEY uq_quotes_version_group (version_group_id,version),
   KEY idx_quotes_deal (deal_id),
   KEY idx_quotes_account (account_id),
   KEY idx_quotes_creator (created_by_user_id),
+  KEY idx_quotes_previous_version (previous_version_id),
   KEY idx_quotes_approval (approval_status,approval_requested_at),
   CONSTRAINT chk_quotes_amounts CHECK (
     subtotal >= 0 AND discount_amount >= 0 AND vat_rate >= 0 AND vat_rate <= 999.99
@@ -222,7 +227,11 @@ CREATE TABLE IF NOT EXISTS quotes (
   CONSTRAINT fk_quotes_creator FOREIGN KEY (created_by_user_id) REFERENCES users(id)
     ON UPDATE CASCADE ON DELETE RESTRICT,
   CONSTRAINT fk_quotes_approver FOREIGN KEY (approval_decided_by_user_id) REFERENCES users(id)
-    ON UPDATE CASCADE ON DELETE SET NULL
+    ON UPDATE CASCADE ON DELETE SET NULL,
+  CONSTRAINT fk_quotes_version_group FOREIGN KEY (version_group_id) REFERENCES quotes(id)
+    ON UPDATE CASCADE ON DELETE RESTRICT,
+  CONSTRAINT fk_quotes_previous_version FOREIGN KEY (previous_version_id) REFERENCES quotes(id)
+    ON UPDATE CASCADE ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 CREATE TABLE IF NOT EXISTS quote_items (
@@ -250,7 +259,7 @@ CREATE TABLE IF NOT EXISTS quote_history (
   id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   quote_id BIGINT UNSIGNED NOT NULL,
   actor_user_id BIGINT UNSIGNED NULL,
-  event_type ENUM('STATUS_CHANGED','APPROVAL_REQUESTED','APPROVED','APPROVAL_REJECTED') NOT NULL,
+  event_type ENUM('STATUS_CHANGED','APPROVAL_REQUESTED','APPROVED','APPROVAL_REJECTED','VERSION_CREATED') NOT NULL,
   previous_value VARCHAR(40) NULL,
   new_value VARCHAR(40) NULL,
   note VARCHAR(1000) NULL,
