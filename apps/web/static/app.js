@@ -7,6 +7,20 @@ const state = {
   users: [],
   deals: [],
   dealsLoaded: false,
+  quotes: [],
+  quotesLoaded: false,
+  quotesLoading: false,
+  quotesLoadAttempted: false,
+  quotesLoadFailed: false,
+  quoteDeals: [],
+  quoteProducts: [],
+  quoteOptionsLoaded: false,
+  quoteOptionsLoading: false,
+  quoteOptionsLoadAttempted: false,
+  quoteDealId: '',
+  quoteVatRate: '10',
+  quoteValidUntil: '',
+  quoteLines: [],
   dealFormOpen: false,
   dealAccounts: [],
   dealAssignees: [],
@@ -157,6 +171,11 @@ function appSidebar(active = 'customers') {
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3v18"/><path d="M18 3v18"/><rect width="6" height="7" x="3" y="5" rx="1"/><rect width="6" height="5" x="15" y="5" rx="1"/></svg>
           <span>Cơ hội Deal</span>
         </a>
+        <a class="nav-item ${active === 'quotes' ? 'active' : ''}" href="/quotes">
+          <span class="nav-indicator"></span>
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3h7l5 5v13H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z"/><path d="M14 3v6h6"/><path d="M9 13h6"/><path d="M9 17h6"/></svg>
+          <span>Báo giá</span>
+        </a>
         <a class="nav-item ${active === 'tasks' ? 'active' : ''}" href="/tasks">
           <span class="nav-indicator"></span>
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 11 3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
@@ -233,7 +252,7 @@ function workspacePage() {
   return `<main class="simple-page"><section class="simple-card workspace-card">${brand}<div class="icon-tile">◈</div>
     <span class="eyebrow">ĐĂNG NHẬP THÀNH CÔNG</span><h1>Xin chào, ${escapeHtml(state.user?.name)}</h1>
     <p class="muted">Vai trò: <strong>${escapeHtml(state.user?.role)}</strong>. Trang quản lý người dùng chỉ dành cho Admin.</p>
-     <a class="primary-button full-width" href="/customers">Mở module khách hàng</a><a class="secondary-button full-width" href="/deals">Mở bảng Deal</a><button class="secondary-button full-width" data-action="logout">↪ &nbsp; Đăng xuất</button></section></main>`;
+     <a class="primary-button full-width" href="/customers">Mở module khách hàng</a><a class="secondary-button full-width" href="/deals">Mở bảng Deal</a><a class="secondary-button full-width" href="/quotes">Mở báo giá</a><button class="secondary-button full-width" data-action="logout">↪ &nbsp; Đăng xuất</button></section></main>`;
 }
 
 // Tạo vỏ trang và chỗ mount React; DnD Kit quản lý cột và card bên trong.
@@ -243,6 +262,130 @@ function dealsPage() {
     ${alertBox(state.error)}${alertBox(state.notice, 'success')}
     ${state.dealsLoaded && !state.deals.length ? '<p class="muted deal-empty">Chưa có Deal để hiển thị.</p>' : ''}
     <div id="deal-board-root"></div>${state.dealFormOpen ? dealCreateModal() : ''}
+  </main></div>`;
+}
+function quoteMoneyParts(value, scale) {
+  const text = String(value ?? '').trim();
+  if (!/^\d+(?:\.\d+)?$/.test(text)) return 0n;
+  const [whole, fraction = ''] = text.split('.');
+  return BigInt(whole) * (10n ** BigInt(scale))
+    + BigInt((fraction + '0'.repeat(scale)).slice(0, scale) || '0');
+}
+function quoteRoundDivide(numerator, denominator) {
+  return (numerator + denominator / 2n) / denominator;
+}
+function quoteFormatCents(cents, currency) {
+  const whole = cents / 100n;
+  const fraction = String(cents % 100n).padStart(2, '0');
+  return `${new Intl.NumberFormat('vi-VN').format(whole)},${fraction} ${escapeHtml(currency || '')}`;
+}
+function quoteTotals(lines = state.quoteLines, vatRate = state.quoteVatRate) {
+  const currency = state.quoteDeals.find((deal) => String(deal.id) === state.quoteDealId)?.currency || '';
+  let subtotal = 0n;
+  let discount = 0n;
+  const lineTotals = lines.map((line) => {
+    const product = state.quoteProducts.find((item) => String(item.id) === String(line.productId));
+    if (!product) return 0n;
+    const gross = quoteRoundDivide(
+      quoteMoneyParts(line.quantity, 3) * quoteMoneyParts(product.unitPrice, 2),
+      1000n,
+    );
+    const lineDiscount = quoteRoundDivide(gross * quoteMoneyParts(line.discountPercent, 2), 10000n);
+    subtotal += gross;
+    discount += lineDiscount;
+    return gross - lineDiscount;
+  });
+  const taxable = subtotal - discount;
+  const tax = quoteRoundDivide(taxable * quoteMoneyParts(vatRate, 2), 10000n);
+  return { currency, subtotal, discount, tax, total: taxable + tax, lineTotals };
+}
+function updateQuotePreview() {
+  const totals = quoteTotals();
+  totals.lineTotals.forEach((value, index) => {
+    const target = document.getElementById(`quote-line-total-${index}`);
+    if (target) target.textContent = quoteFormatCents(value, totals.currency);
+  });
+  for (const [id, value] of [
+    ['quote-subtotal', totals.subtotal], ['quote-discount', totals.discount],
+    ['quote-tax', totals.tax], ['quote-grand-total', totals.total],
+  ]) {
+    const target = document.getElementById(id);
+    if (target) target.textContent = quoteFormatCents(value, totals.currency);
+  }
+  const taxLabel = document.getElementById('quote-tax-label');
+  if (taxLabel) taxLabel.textContent = `VAT (${state.quoteVatRate}%)`;
+}
+function quoteLine(line, index, availableProducts, currency) {
+  return `<div class="quote-line" data-quote-line="${index}">
+    <label>Sản phẩm
+      <select name="productId" data-quote-field="productId" required ${availableProducts.length ? '' : 'disabled'}>
+        <option value="">${availableProducts.length ? 'Chọn sản phẩm' : 'Không có sản phẩm cùng tiền tệ'}</option>
+        ${availableProducts.map((product) => `<option value="${product.id}" ${String(product.id) === String(line.productId) ? 'selected' : ''}>${escapeHtml(product.sku)} · ${escapeHtml(product.name)} (${quoteFormatCents(quoteMoneyParts(product.unitPrice, 2), currency)})</option>`).join('')}
+      </select>
+    </label>
+    <label>Số lượng
+      <input name="quantity" data-quote-field="quantity" type="number" min="0.001" max="999999999.999" step="0.001" value="${escapeHtml(line.quantity)}" required>
+    </label>
+    <label>Chiết khấu (%)
+      <input name="discountPercent" data-quote-field="discountPercent" type="number" min="0" max="100" step="0.01" value="${escapeHtml(line.discountPercent)}" required>
+    </label>
+    <div class="quote-line-total"><span>Thành tiền</span><strong id="quote-line-total-${index}">${quoteFormatCents(0n, currency)}</strong></div>
+    <button class="quote-remove-line" type="button" data-action="remove-quote-line" data-index="${index}" aria-label="Xóa dòng sản phẩm" ${state.quoteLines.length <= 1 ? 'disabled' : ''}>×</button>
+  </div>`;
+}
+function quotesPage() {
+  const rows = state.quotes.map((quote) => `<tr>
+    <td><strong>${escapeHtml(quote.quoteNumber)}</strong><span class="quote-table-sub">${escapeHtml(quote.accountName || '')}</span></td>
+    <td>${escapeHtml(quote.dealName || '—')}</td>
+    <td><span class="quote-status quote-status-${String(quote.status).toLowerCase()}">${escapeHtml(({ DRAFT: 'Bản nháp', SENT: 'Đã gửi', ACCEPTED: 'Đã chấp nhận', REJECTED: 'Khách từ chối', EXPIRED: 'Hết hạn' })[quote.status] || quote.status)}</span></td>
+    <td>${quoteFormatCents(quoteMoneyParts(quote.grandTotal ?? quote.totalAmount, 2), quote.currency)}</td>
+    <td><a class="text-button" href="/api/quotes/${encodeURIComponent(quote.id)}/pdf" target="_blank" rel="noopener">Tải PDF</a></td>
+  </tr>`).join('');
+  return `<div class="app-shell">${appSidebar('quotes')}<main class="admin-content quote-content">
+    <header class="topbar"><div><span class="eyebrow">SALES DOCUMENTS</span><h1>Báo giá</h1></div><div class="admin-avatar">${escapeHtml(state.user?.role || '')}</div></header>
+    ${alertBox(state.error)}${alertBox(state.notice, 'success')}
+    <section class="page-intro"><div><h2>Danh sách báo giá</h2><p class="muted">Tạo báo giá từ Deal và danh mục sản phẩm hiện hành.</p></div><button class="primary-button compact" data-action="new-quote">＋ Lập báo giá</button></section>
+    <section class="customer-table-card quote-list-card"><div class="table-scroll"><table class="customer-data-table quote-table">
+      <thead><tr><th>MÃ BÁO GIÁ / KHÁCH HÀNG</th><th>DEAL</th><th>TRẠNG THÁI</th><th>TỔNG CỘNG</th><th>TÀI LIỆU</th></tr></thead>
+      <tbody>${rows || `<tr><td class="empty-row" colspan="5">${state.quotesLoading || (!state.quotesLoadAttempted && !state.quotesLoaded) ? 'Đang tải báo giá...' : state.quotesLoadFailed ? 'Không tải được dữ liệu báo giá. ' : 'Chưa có báo giá. Hãy tạo báo giá đầu tiên.'}${state.quotesLoadFailed ? '<button class="text-button" data-action="retry-quotes">Thử tải lại</button>' : ''}</td></tr>`}</tbody>
+    </table></div></section>
+  </main></div>`;
+}
+function quoteBuilderPage() {
+  const deal = state.quoteDeals.find((item) => String(item.id) === state.quoteDealId);
+  const currency = deal?.currency || '';
+  const availableProducts = deal ? state.quoteProducts.filter((product) => product.currency === currency) : [];
+  const totals = quoteTotals();
+  return `<div class="app-shell">${appSidebar('quotes')}<main class="admin-content quote-content">
+    <header class="topbar"><div><span class="eyebrow">QUOTE BUILDER</span><h1>Lập báo giá</h1></div><div class="admin-avatar">${escapeHtml(state.user?.role || '')}</div></header>
+    <a class="back-link quote-back-link" href="/quotes">← Quay lại danh sách báo giá</a>
+    ${alertBox(state.error)}
+    ${!state.quoteOptionsLoaded ? `<section class="customer-table-card quote-loading">${state.quoteOptionsLoading || !state.quoteOptionsLoadAttempted ? 'Đang tải Deal và sản phẩm...' : '<button class="text-button" data-action="retry-quote-options">Thử tải lại dữ liệu</button>'}</section>` : `
+    <form class="quote-builder" data-form="quote">
+      <section class="customer-table-card quote-section">
+        <div class="quote-section-heading"><div><span class="eyebrow">01 · THÔNG TIN</span><h2>Thông tin báo giá</h2></div><span class="quote-step">01</span></div>
+        <div class="quote-fields">
+          <label>Deal liên quan<select name="dealId" data-input="quote-deal" required><option value="">Chọn Deal</option>${state.quoteDeals.map((item) => `<option value="${item.id}" ${String(item.id) === state.quoteDealId ? 'selected' : ''}>${escapeHtml(item.name)} · ${escapeHtml(item.accountName || '')} (${escapeHtml(item.currency)})</option>`).join('')}</select></label>
+          <label>Hiệu lực đến<input name="validUntil" data-input="quote-valid-until" type="date" value="${escapeHtml(state.quoteValidUntil)}"></label>
+          <label>VAT (%)<input name="vatRate" data-input="quote-vat" type="number" min="0" max="999.99" step="0.01" value="${escapeHtml(state.quoteVatRate)}" required></label>
+          <div class="quote-currency-field"><span>Tiền tệ</span><strong>${escapeHtml(currency || 'Chọn Deal trước')}</strong></div>
+        </div>
+      </section>
+      <section class="customer-table-card quote-section">
+        <div class="quote-section-heading"><div><span class="eyebrow">02 · SẢN PHẨM</span><h2>Sản phẩm và dịch vụ</h2></div><button class="secondary-button compact" type="button" data-action="add-quote-line" ${state.quoteLines.length >= 100 ? 'disabled' : ''}>＋ Thêm dòng</button></div>
+        ${state.quoteOptionsLoaded && !state.quoteDeals.length ? '<p class="quote-hint">Chưa có Deal bạn có quyền sử dụng. Hãy tạo hoặc được giao một Deal trước khi lập báo giá.</p>' : ''}
+        ${deal && !availableProducts.length ? '<p class="quote-hint">Chưa có sản phẩm đang hoạt động cùng đơn vị tiền tệ với Deal. Hãy cập nhật danh mục sản phẩm trước khi lập báo giá.</p>' : ''}
+        <div class="quote-lines">${state.quoteLines.map((line, index) => quoteLine(line, index, availableProducts, currency)).join('')}</div>
+      </section>
+      <section class="customer-table-card quote-summary">
+        <div><span>Tạm tính</span><strong id="quote-subtotal">${quoteFormatCents(totals.subtotal, currency)}</strong></div>
+        <div><span>Chiết khấu</span><strong id="quote-discount">− ${quoteFormatCents(totals.discount, currency)}</strong></div>
+        <div><span id="quote-tax-label">VAT (${escapeHtml(state.quoteVatRate)}%)</span><strong id="quote-tax">${quoteFormatCents(totals.tax, currency)}</strong></div>
+        <div class="quote-grand-total"><span>Tổng thanh toán</span><strong id="quote-grand-total">${quoteFormatCents(totals.total, currency)}</strong></div>
+        <p class="quote-hint">Tổng tiền được máy chủ tính lại từ đơn giá hiện tại của sản phẩm khi lưu báo giá.</p>
+        <div class="quote-actions"><a class="secondary-button" href="/quotes">Hủy</a><button class="primary-button compact" type="submit" ${!deal || !availableProducts.length ? 'disabled' : ''}>Tạo báo giá</button></div>
+      </section>
+    </form>`}
   </main></div>`;
 }
 function dealCreateModal() {
@@ -922,6 +1065,42 @@ async function loadDeals() {
   }
   if (route() === '/deals') render();
 }
+async function loadQuotes() {
+  state.quotesLoading = true;
+  state.quotesLoadAttempted = true;
+  try {
+    const result = await api('/quotes');
+    state.quotes = result.quotes || [];
+    state.quotesLoaded = true;
+    state.quotesLoadFailed = false;
+    state.error = '';
+  } catch (error) {
+    state.quotesLoadFailed = true;
+    state.error = error.message;
+  } finally {
+    state.quotesLoading = false;
+  }
+  if (route() === '/quotes') render();
+}
+async function loadQuoteOptions() {
+  state.quoteOptionsLoading = true;
+  state.quoteOptionsLoadAttempted = true;
+  try {
+    const [deals, products] = await Promise.all([
+      api('/deals'),
+      api('/products?active=true'),
+    ]);
+    state.quoteDeals = deals.deals || [];
+    state.quoteProducts = products.products || [];
+    state.quoteOptionsLoaded = true;
+    state.error = '';
+  } catch (error) {
+    state.error = error.message;
+  } finally {
+    state.quoteOptionsLoading = false;
+  }
+  if (route() === '/quotes/new') render();
+}
 async function loadTasks() {
   const params = new URLSearchParams();
   if (state.taskStatusFilter) params.set('status', state.taskStatusFilter);
@@ -1040,6 +1219,13 @@ function render() {
       }
     }
     if (!state.dealsLoaded) void loadDeals();
+  } else if (path === '/quotes') {
+    root.innerHTML = quotesPage();
+    if (!state.quotesLoaded && !state.quotesLoading && !state.quotesLoadAttempted) void loadQuotes();
+  } else if (path === '/quotes/new') {
+    if (!state.quoteLines.length) state.quoteLines = [{ productId: '', quantity: '1', discountPercent: '0' }];
+    root.innerHTML = quoteBuilderPage();
+    if (!state.quoteOptionsLoaded && !state.quoteOptionsLoading && !state.quoteOptionsLoadAttempted) void loadQuoteOptions();
   } else if (path === '/tasks') {
     root.innerHTML = tasksPage();
     if (!state.tasksLoaded) void loadTasks();
@@ -1052,7 +1238,8 @@ function render() {
 }
 root.addEventListener('click', async (event) => {
   const anchor = event.target.closest('a[href]');
-  if (anchor && anchor.origin === location.origin && anchor.getAttribute('href').startsWith('/')) {
+  if (anchor && anchor.origin === location.origin && anchor.getAttribute('href').startsWith('/')
+    && !anchor.pathname.startsWith('/api/')) {
     event.preventDefault();
     navigate(anchor.getAttribute('href'));
     return;
@@ -1133,6 +1320,28 @@ root.addEventListener('click', async (event) => {
     case 'new-deal':
       state.dealFormOpen = true; state.dealOwnerSelected = state.user?.role === 'Sale' ? String(state.user.id) : '';
       state.error = ''; state.notice = ''; render(); void loadDealCreateOptions(); break;
+    case 'new-quote':
+      state.quoteDealId = ''; state.quoteVatRate = '10'; state.quoteValidUntil = '';
+      state.quoteLines = [{ productId: '', quantity: '1', discountPercent: '0' }];
+      state.error = ''; navigate('/quotes/new'); break;
+    case 'retry-quote-options':
+      state.error = ''; state.quoteOptionsLoaded = false; state.quoteOptionsLoadAttempted = false; void loadQuoteOptions(); render(); break;
+    case 'retry-quotes':
+      state.error = ''; state.quotesLoaded = false; state.quotesLoadAttempted = false; state.quotesLoadFailed = false; void loadQuotes(); render(); break;
+    case 'add-quote-line':
+      if (state.quoteLines.length < 100) {
+        state.quoteLines.push({ productId: '', quantity: '1', discountPercent: '0' });
+        render();
+      }
+      break;
+    case 'remove-quote-line': {
+      const index = Number(button.dataset.index);
+      if (state.quoteLines.length > 1 && Number.isInteger(index)) {
+        state.quoteLines.splice(index, 1);
+        render();
+      }
+      break;
+    }
     case 'close-deal':
       if (button.classList.contains('deal-modal-backdrop') && event.target !== button) break;
       state.dealFormOpen = false; state.error = ''; render(); break;
@@ -1274,7 +1483,19 @@ root.addEventListener('click', async (event) => {
 });
 root.addEventListener('input', (event) => {
   const input = event.target;
-  if (input.dataset.input === 'admin-search') {
+  if (input.dataset.quoteField) {
+    const line = input.closest('.quote-line');
+    const index = Number(line?.dataset.quoteLine);
+    if (Number.isInteger(index) && state.quoteLines[index]) {
+      state.quoteLines[index][input.dataset.quoteField] = input.value;
+      updateQuotePreview();
+    }
+  } else if (input.dataset.input === 'quote-vat') {
+    state.quoteVatRate = input.value;
+    updateQuotePreview();
+  } else if (input.dataset.input === 'quote-valid-until') {
+    state.quoteValidUntil = input.value;
+  } else if (input.dataset.input === 'admin-search') {
     state.adminSearch = input.value;
     const pos = input.selectionStart;
     render();
@@ -1307,6 +1528,25 @@ root.addEventListener('change', async (event) => {
   } else if (input.dataset.input === 'deal-owner') {
     state.dealOwnerSelected = input.value;
     render();
+  } else if (input.dataset.input === 'quote-deal') {
+    state.quoteDealId = input.value;
+    const currency = state.quoteDeals.find((deal) => String(deal.id) === state.quoteDealId)?.currency;
+    state.quoteLines = state.quoteLines.map((line) => ({
+      ...line,
+      productId: state.quoteProducts.some((product) => String(product.id) === String(line.productId)
+        && product.currency === currency) ? line.productId : '',
+    }));
+    render();
+  } else if (input.dataset.quoteField === 'productId') {
+    const line = input.closest('.quote-line');
+    const index = Number(line?.dataset.quoteLine);
+    if (Number.isInteger(index) && state.quoteLines[index]) {
+      state.quoteLines[index].productId = input.value;
+      render();
+    }
+  } else if (input.dataset.input === 'quote-vat') {
+    state.quoteVatRate = input.value;
+    updateQuotePreview();
   } else if (input.dataset.input === 'task-status-filter') {
     state.taskStatusFilter = input.value;
     state.tasksLoaded = false; taskRequest = ''; render();
@@ -1429,6 +1669,30 @@ root.addEventListener('submit', async (event) => {
       state.appointmentFormOpen = false;
       state.appointmentsLoaded = false; appointmentRequest = '';
       state.error = ''; state.notice = 'Đã tạo lịch hẹn.';
+      render();
+    } else if (form.dataset.form === 'quote') {
+      const items = [...form.querySelectorAll('.quote-line')].map((line) => ({
+        productId: Number(line.querySelector('[name="productId"]').value),
+        quantity: line.querySelector('[name="quantity"]').value,
+        discountPercent: line.querySelector('[name="discountPercent"]').value,
+      }));
+      const submitButton = form.querySelector('[type="submit"]');
+      submitButton.disabled = true;
+      submitButton.textContent = 'Đang tạo báo giá...';
+      const result = await api('/quotes', {
+        method: 'POST',
+        body: JSON.stringify({
+          dealId: Number(data.dealId),
+          validUntil: data.validUntil || null,
+          vatRate: data.vatRate,
+          items,
+        }),
+      });
+      state.quotes = [result.quote, ...state.quotes.filter((quote) => String(quote.id) !== String(result.quote.id))];
+      state.quotesLoaded = true;
+      state.quoteLines = [];
+      navigate('/quotes');
+      state.notice = `Đã tạo báo giá ${result.quote.quoteNumber}.`;
       render();
     }
   } catch (error) {
