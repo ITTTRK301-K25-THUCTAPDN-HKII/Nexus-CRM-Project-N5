@@ -30,6 +30,7 @@ const state = {
   quoteVatRate: '10',
   quoteValidUntil: '',
   quoteLines: [],
+  quotePreviewId: null,
   dealFormOpen: false,
   dealAccounts: [],
   dealAssignees: [],
@@ -355,7 +356,7 @@ function quotesPage() {
     <td>${escapeHtml(quote.dealName || '—')}</td>
     <td><span class="quote-status quote-status-${String(quote.status).toLowerCase()}">${escapeHtml(({ DRAFT: 'Bản nháp', SENT: 'Đã gửi', ACCEPTED: 'Đã chấp nhận', REJECTED: 'Khách từ chối', EXPIRED: 'Hết hạn' })[quote.status] || quote.status)}</span></td>
     <td>${quoteFormatCents(quoteMoneyParts(quote.grandTotal ?? quote.totalAmount, 2), quote.currency)}</td>
-    <td><a class="text-button" href="/api/quotes/${encodeURIComponent(quote.id)}/pdf" target="_blank" rel="noopener">Tải PDF</a></td>
+    <td><div class="row-actions"><button class="text-button" data-action="preview-quote" data-id="${escapeHtml(quote.id)}">Xem trước</button><a class="text-button" href="/api/quotes/${encodeURIComponent(quote.id)}/pdf">Tải PDF</a></div></td>
   </tr>`).join('');
   return `<div class="app-shell">${appSidebar('quotes')}<main class="admin-content quote-content">
     <header class="topbar"><div><span class="eyebrow">SALES DOCUMENTS</span><h1>Báo giá</h1></div><div class="admin-avatar">${escapeHtml(state.user?.role || '')}</div></header>
@@ -365,7 +366,23 @@ function quotesPage() {
       <thead><tr><th>MÃ BÁO GIÁ / KHÁCH HÀNG</th><th>DEAL</th><th>TRẠNG THÁI</th><th>TỔNG CỘNG</th><th>TÀI LIỆU</th></tr></thead>
       <tbody>${rows || `<tr><td class="empty-row" colspan="5">${state.quotesLoading || (!state.quotesLoadAttempted && !state.quotesLoaded) ? 'Đang tải báo giá...' : state.quotesLoadFailed ? 'Không tải được dữ liệu báo giá. ' : 'Chưa có báo giá. Hãy tạo báo giá đầu tiên.'}${state.quotesLoadFailed ? '<button class="text-button" data-action="retry-quotes">Thử tải lại</button>' : ''}</td></tr>`}</tbody>
     </table></div></section>
+    ${quotePreviewModal()}
   </main></div>`;
+}
+function quotePreviewModal() {
+  const quote = state.quotes.find((item) => String(item.id) === String(state.quotePreviewId));
+  if (!quote) return '';
+  const pdfUrl = `/api/quotes/${encodeURIComponent(quote.id)}/pdf`;
+  return `<div class="modal-backdrop quote-preview-backdrop" data-action="close-quote-preview">
+    <section class="quote-preview-dialog" role="dialog" aria-modal="true" aria-labelledby="quote-preview-title">
+      <header class="quote-preview-header">
+        <div><span class="eyebrow">PDF PREVIEW${quote.status === 'DRAFT' ? ' · BẢN NHÁP' : ''}</span><h2 id="quote-preview-title">${escapeHtml(quote.quoteNumber)}</h2><p>${escapeHtml(quote.accountName || '')} · ${escapeHtml(quote.dealName || '')}</p></div>
+        <div class="quote-preview-actions"><a class="primary-button compact" href="${pdfUrl}">↓ Tải xuống PDF</a><button type="button" class="modal-close" data-action="close-quote-preview" aria-label="Đóng xem trước">×</button></div>
+      </header>
+      ${quote.status === 'DRAFT' ? '<p class="quote-preview-notice">Đây là bản xem trước. Báo giá vẫn là bản nháp và chưa được phát hành cho khách hàng.</p>' : ''}
+      <iframe class="quote-preview-frame" src="${pdfUrl}?disposition=inline" title="Bản xem trước báo giá ${escapeHtml(quote.quoteNumber)}"></iframe>
+    </section>
+  </div>`;
 }
 function formatProductPrice(product) {
   const amount = Number(product.unitPrice);
@@ -1459,6 +1476,15 @@ root.addEventListener('click', async (event) => {
       state.error = ''; state.quoteOptionsLoaded = false; state.quoteOptionsLoadAttempted = false; void loadQuoteOptions(); render(); break;
     case 'retry-quotes':
       state.error = ''; state.quotesLoaded = false; state.quotesLoadAttempted = false; state.quotesLoadFailed = false; void loadQuotes(); render(); break;
+    case 'preview-quote':
+      state.quotePreviewId = String(id);
+      render();
+      break;
+    case 'close-quote-preview':
+      if (button.classList.contains('modal-backdrop') && event.target !== button) break;
+      state.quotePreviewId = null;
+      render();
+      break;
     case 'add-quote-line':
       if (state.quoteLines.length < 100) {
         state.quoteLines.push({ productId: '', quantity: '1', discountPercent: '0' });
