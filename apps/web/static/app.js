@@ -12,6 +12,15 @@ const state = {
   quotesLoading: false,
   quotesLoadAttempted: false,
   quotesLoadFailed: false,
+  products: [],
+  productsLoaded: false,
+  productsLoading: false,
+  productsLoadAttempted: false,
+  productSearch: '',
+  productStatusFilter: '',
+  productFormOpen: false,
+  productEdit: null,
+  productDraft: { sku: '', name: '', description: '', unitPrice: '', currency: 'VND', isActive: true },
   quoteDeals: [],
   quoteProducts: [],
   quoteOptionsLoaded: false,
@@ -56,6 +65,7 @@ const state = {
   accountName: '',
   detail: null,
   geminiSummary: null,
+  interactionSummary: null,
   geminiTaskNotice: '',
   emailCopied: false,
   mailbox: [],
@@ -139,6 +149,7 @@ function navigate(path, replace = false) {
   state.notice = '';
   state.detail = null;
   state.geminiSummary = null;
+  state.interactionSummary = null;
   state.geminiTaskNotice = '';
   state.emailCopied = false;
   render();
@@ -160,6 +171,11 @@ function appSidebar(active = 'customers') {
           <span class="nav-indicator"></span>
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
           <span>Quản lý người dùng</span>
+        </a>` : ''}
+        ${state.user?.role === 'Admin' ? `<a class="nav-item ${active === 'products' ? 'active' : ''}" href="/admin/products">
+          <span class="nav-indicator"></span>
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 4 5-2 5 2 5 3-10 5L2 7l5-3Z"/><path d="m2 12 10 5 10-5M2 17l10 5 10-5M12 12v10"/></svg>
+          <span>Kho sản phẩm</span>
         </a>` : ''}
         <a class="nav-item ${active === 'customers' ? 'active' : ''}" href="/customers">
           <span class="nav-indicator"></span>
@@ -349,6 +365,53 @@ function quotesPage() {
       <thead><tr><th>MÃ BÁO GIÁ / KHÁCH HÀNG</th><th>DEAL</th><th>TRẠNG THÁI</th><th>TỔNG CỘNG</th><th>TÀI LIỆU</th></tr></thead>
       <tbody>${rows || `<tr><td class="empty-row" colspan="5">${state.quotesLoading || (!state.quotesLoadAttempted && !state.quotesLoaded) ? 'Đang tải báo giá...' : state.quotesLoadFailed ? 'Không tải được dữ liệu báo giá. ' : 'Chưa có báo giá. Hãy tạo báo giá đầu tiên.'}${state.quotesLoadFailed ? '<button class="text-button" data-action="retry-quotes">Thử tải lại</button>' : ''}</td></tr>`}</tbody>
     </table></div></section>
+  </main></div>`;
+}
+function formatProductPrice(product) {
+  const amount = Number(product.unitPrice);
+  if (!Number.isFinite(amount)) return '—';
+  try {
+    return new Intl.NumberFormat('vi-VN', {
+      style: 'currency', currency: product.currency || 'VND', maximumFractionDigits: 2,
+    }).format(amount);
+  } catch {
+    return `${amount.toLocaleString('vi-VN')} ${product.currency || ''}`.trim();
+  }
+}
+function productsPage() {
+  const products = state.products.filter((product) => {
+    const search = (state.productSearch || '').trim().toLowerCase();
+    const matchesSearch = !search || `${product.sku} ${product.name} ${product.description || ''}`.toLowerCase().includes(search);
+    const matchesStatus = !state.productStatusFilter
+      || (state.productStatusFilter === 'active' ? product.isActive : !product.isActive);
+    return matchesSearch && matchesStatus;
+  });
+  const activeCount = state.products.filter((product) => product.isActive).length;
+  const inactiveCount = state.products.length - activeCount;
+  const draft = state.productDraft || {};
+  const productCurrencies = [...new Set(['VND', 'USD', 'EUR', draft.currency || 'VND'])];
+  const form = state.productFormOpen ? `<section class="product-form-card">
+    <div class="product-form-heading"><div><span class="eyebrow">${state.productEdit ? 'CẬP NHẬT DANH MỤC' : 'THÊM VÀO DANH MỤC'}</span><h2>${state.productEdit ? 'Chỉnh sửa sản phẩm hoặc dịch vụ' : 'Thêm sản phẩm hoặc dịch vụ'}</h2></div>
+      <button type="button" class="icon-button" data-action="close-product-form" aria-label="Đóng biểu mẫu">×</button></div>
+    <form class="product-form" data-form="product">
+      <label>Mã SKU *<input name="sku" required minlength="1" maxlength="80" pattern="[A-Za-z0-9][A-Za-z0-9._/-]*" title="Chỉ dùng chữ, số, dấu chấm, gạch dưới, gạch chéo hoặc gạch ngang" value="${escapeHtml(draft.sku)}" placeholder="VD: DV-CRM-001"></label>
+      <label>Tên sản phẩm / dịch vụ *<input name="name" required minlength="2" maxlength="160" value="${escapeHtml(draft.name)}" placeholder="Nhập tên sản phẩm hoặc dịch vụ"></label>
+      <label>Đơn giá niêm yết *<input name="unitPrice" type="number" required min="0" max="9999999999999.99" step="0.01" value="${escapeHtml(draft.unitPrice)}" placeholder="0.00"></label>
+      <label>Tiền tệ<select name="currency">${productCurrencies.map((currency) => `<option value="${escapeHtml(currency)}" ${draft.currency === currency ? 'selected' : ''}>${escapeHtml(currency)}</option>`).join('')}</select></label>
+      <label class="product-description-field">Mô tả<textarea name="description" maxlength="5000" rows="3" placeholder="Thông tin mô tả (không bắt buộc)">${escapeHtml(draft.description)}</textarea></label>
+      <label class="product-active-field"><input name="isActive" type="checkbox" ${draft.isActive ? 'checked' : ''}><span>Đang kinh doanh</span></label>
+      <div class="product-form-actions"><button type="button" class="secondary-button compact" data-action="close-product-form">Hủy</button><button type="submit" class="primary-button compact">${state.productEdit ? 'Lưu thay đổi' : 'Thêm vào kho'}</button></div>
+    </form>
+  </section>` : '';
+  return `<div class="app-shell">${appSidebar('products')}<main class="admin-content product-content">
+    <header class="topbar"><div><div class="breadcrumb"><span>Nexus CRM</span><span>/</span><span>Quản trị hệ thống</span><span>/</span><strong class="breadcrumb-current">Kho sản phẩm</strong></div><h1>Kho sản phẩm / dịch vụ</h1><p class="topbar-sub">Quản lý mã SKU, đơn giá niêm yết và trạng thái kinh doanh.</p></div>
+      <button class="primary-button compact" data-action="new-product">＋ Thêm sản phẩm</button></header>
+    ${alertBox(state.error)}${alertBox(state.notice, 'success')}
+    <section class="product-metrics" aria-label="Tổng quan danh mục"><article><span>Tổng danh mục</span><strong>${state.products.length}</strong></article><article><span>Đang kinh doanh</span><strong class="product-metric-active">${activeCount}</strong></article><article><span>Ngừng kinh doanh</span><strong class="product-metric-inactive">${inactiveCount}</strong></article></section>
+    ${form}
+    <section class="customer-table-card product-list-card"><div class="product-toolbar"><div><h2>Danh mục sản phẩm</h2><p>${products.length} trên ${state.products.length} mục</p></div><div class="product-filters"><label class="product-search"><span class="sr-only">Tìm sản phẩm</span><input aria-label="Tìm theo SKU, tên hoặc mô tả" placeholder="Tìm SKU, tên sản phẩm..." data-input="product-search" value="${escapeHtml(state.productSearch)}"></label><select aria-label="Lọc trạng thái kinh doanh" data-input="product-status-filter"><option value="" ${!state.productStatusFilter ? 'selected' : ''}>Mọi trạng thái</option><option value="active" ${state.productStatusFilter === 'active' ? 'selected' : ''}>Đang kinh doanh</option><option value="inactive" ${state.productStatusFilter === 'inactive' ? 'selected' : ''}>Ngừng kinh doanh</option></select></div></div>
+      ${state.productsLoading && !state.productsLoaded ? '<div class="product-empty">Đang tải danh mục sản phẩm…</div>' : state.productsLoadAttempted && !state.productsLoaded ? `<div class="product-empty">Không tải được danh mục. <button class="text-button" data-action="retry-products">Thử lại</button></div>` : `<div class="table-scroll"><table class="customer-data-table product-table"><thead><tr><th>SKU</th><th>SẢN PHẨM / DỊCH VỤ</th><th>ĐƠN GIÁ NIÊM YẾT</th><th>TRẠNG THÁI</th><th>THAO TÁC</th></tr></thead><tbody>${products.map((product) => `<tr><td><span class="product-sku">${escapeHtml(product.sku)}</span></td><td><strong>${escapeHtml(product.name)}</strong>${product.description ? `<span class="product-description">${escapeHtml(product.description)}</span>` : ''}</td><td class="product-price">${escapeHtml(formatProductPrice(product))}</td><td><span class="product-status ${product.isActive ? 'is-active' : 'is-inactive'}"><i></i>${product.isActive ? 'Đang kinh doanh' : 'Ngừng kinh doanh'}</span></td><td><div class="product-row-actions"><button class="text-button" data-action="edit-product" data-id="${Number(product.id)}">Chỉnh sửa</button><button class="text-button ${product.isActive ? 'product-deactivate' : ''}" data-action="toggle-product-status" data-id="${Number(product.id)}">${product.isActive ? 'Ngừng kinh doanh' : 'Kinh doanh lại'}</button></div></td></tr>`).join('') || `<tr><td colspan="5" class="product-empty">${state.products.length ? 'Không có sản phẩm phù hợp với bộ lọc.' : 'Kho chưa có sản phẩm hoặc dịch vụ.'}</td></tr>`}</tbody></table></div>`}
+    </section>
   </main></div>`;
 }
 function quoteBuilderPage() {
@@ -831,6 +894,19 @@ function activityTimelineItem(activity) {
     <div><strong>${escapeHtml(activity.subject)}</strong><span>${presentation.label} · ${escapeHtml(occurredAt)}</span>
     ${activity.details ? `<p>${escapeHtml(activity.details)}</p>` : ''}</div></div>`;
 }
+function interactionSummaryPanel() {
+  const summary = state.interactionSummary;
+  if (!summary) return '';
+  if (summary.loading) return `<div class="interaction-summary loading" role="status"><span class="interaction-summary-spinner">✦</span><div><strong>Gemini đang đọc lịch sử tương tác…</strong><p>Thông tin nhận dạng được lọc trước khi gửi phân tích.</p></div></div>`;
+  if (summary.error) return `<div class="interaction-summary error" role="alert"><div><strong>Chưa thể tạo tóm tắt</strong><p>${escapeHtml(summary.error)}</p></div><button class="secondary-button compact" data-action="summarize-activities">Thử lại</button></div>`;
+  const data = summary.data;
+  if (!data) return '';
+  return `<section class="interaction-summary result" aria-label="Tóm tắt tương tác AI">
+    <div class="interaction-summary-heading"><div><span class="eyebrow">AI SMART SUMMARY</span><h3>Tóm tắt lịch sử tương tác</h3></div><span>${Number(summary.activitiesCount) || 0} hoạt động · ${escapeHtml(data.model || 'Gemini')}</span></div>
+    <div class="interaction-summary-grid"><article><span>Nhu cầu</span><p>${escapeHtml(data.needs)}</p></article><article><span>Tâm lý khách hàng</span><p>${escapeHtml(data.sentiment)}</p></article><article><span>Bước tiếp theo</span><p>${escapeHtml(data.next_step)}</p></article></div>
+    <p class="interaction-summary-note">Nội dung do AI tạo chỉ để tham khảo. Hãy kiểm tra trước khi sử dụng.</p>
+  </section>`;
+}
 function geminiCopilotPanel() {
   const g = state.geminiSummary;
   if (!g) return '';
@@ -976,7 +1052,8 @@ function accountDetailPage() {
     ${contacts.length ? `<div class="related-list">${contacts.map((c) => `<div class="related-item"><div class="avatar">${initials(c.firstName)}</div><div class="related-main"><strong>${escapeHtml(c.firstName)} ${escapeHtml(c.lastName)}</strong><span>${escapeHtml(c.jobTitle || 'Chưa có chức vụ')}</span><small>${escapeHtml(c.email || c.phone || 'Chưa có thông tin liên hệ')}</small></div></div>`).join('')}</div>` : '<p class="empty-state">Chưa có người liên hệ.</p>'}</article>
     <article class="table-card detail-section"><div class="detail-section-heading"><div class="icon-tile small-tile">◇</div><div><strong>Cơ hội kinh doanh</strong><span>${deals.length} cơ hội gần đây</span></div></div>
     ${deals.length ? `<div class="related-list">${deals.map((d) => `<div class="related-item deal-item"><div class="related-main"><strong>${escapeHtml(d.name)}</strong><span>${escapeHtml(d.stage)} · ${escapeHtml(d.probability)}%</span></div><strong>${escapeHtml(d.currency)} ${Number(d.amount).toLocaleString('vi-VN')}</strong></div>`).join('')}</div>` : '<p class="empty-state">Chưa có cơ hội kinh doanh.</p>'}</article>
-    <article class="table-card detail-section activity-section"><div class="detail-section-heading"><div class="icon-tile small-tile">◷</div><div><strong>Lịch sử tương tác</strong><span>${activities.length} hoạt động gần đây · mới nhất trước</span></div></div>
+    <article class="table-card detail-section activity-section"><div class="detail-section-heading"><div class="icon-tile small-tile">◷</div><div><strong>Lịch sử tương tác</strong><span>${activities.length} hoạt động gần đây · mới nhất trước</span></div><button class="secondary-button compact interaction-summary-trigger" data-action="summarize-activities" ${state.interactionSummary?.loading ? 'disabled' : ''}>${state.interactionSummary?.loading ? 'Đang tóm tắt…' : '✦ Tóm tắt AI'}</button></div>
+    ${interactionSummaryPanel()}
     ${activities.length ? `<div class="timeline activity-timeline">${activities.map(activityTimelineItem).join('')}</div>` : '<p class="empty-state">Chưa có lịch sử tương tác.</p>'}</article></section></main></div>`;
 }
 async function loadCustomers() {
@@ -1032,6 +1109,7 @@ async function loadDealCreateOptions() {
 }
 async function loadDetail(id) {
   state.geminiSummary = null;
+  state.interactionSummary = null;
   state.geminiTaskNotice = '';
   state.emailCopied = false;
   try {
@@ -1081,6 +1159,23 @@ async function loadQuotes() {
     state.quotesLoading = false;
   }
   if (route() === '/quotes') render();
+}
+async function loadProducts(force = false) {
+  if (state.productsLoading) return;
+  if (state.productsLoaded && !force) return;
+  state.productsLoading = true;
+  state.productsLoadAttempted = true;
+  try {
+    const result = await api('/products');
+    state.products = result.products || [];
+    state.productsLoaded = true;
+    state.error = '';
+  } catch (error) {
+    state.error = error.message;
+  } finally {
+    state.productsLoading = false;
+  }
+  if (route() === '/admin/products') render();
 }
 async function loadQuoteOptions() {
   state.quoteOptionsLoading = true;
@@ -1184,6 +1279,13 @@ function render() {
     }
     root.innerHTML = adminPage();
     if (!state.usersLoaded) void loadUsers();
+  } else if (path === '/admin/products') {
+    if (state.user.role !== 'Admin') {
+      navigate('/workspace', true);
+      return;
+    }
+    root.innerHTML = productsPage();
+    if (!state.productsLoaded && !state.productsLoading) void loadProducts();
   } else if (path === '/customers') {
     root.innerHTML = customersPage();
     void loadCustomers();
@@ -1269,6 +1371,35 @@ root.addEventListener('click', async (event) => {
       break;
     case 'toggle-user-form': state.userFormOpen = !state.userFormOpen; render(); break;
     case 'cancel-user': state.userFormOpen = false; render(); break;
+    case 'new-product':
+      state.productEdit = null;
+      state.productDraft = { sku: '', name: '', description: '', unitPrice: '', currency: 'VND', isActive: true };
+      state.productFormOpen = true; state.error = ''; state.notice = ''; render(); break;
+    case 'close-product-form':
+      state.productFormOpen = false; state.productEdit = null; state.error = ''; render(); break;
+    case 'retry-products':
+      state.productsLoaded = false; state.productsLoadAttempted = false; state.error = ''; void loadProducts(true); render(); break;
+    case 'edit-product': {
+      const product = state.products.find((item) => Number(item.id) === id);
+      if (!product) break;
+      state.productEdit = product;
+      state.productDraft = {
+        sku: product.sku || '', name: product.name || '', description: product.description || '',
+        unitPrice: String(product.unitPrice ?? ''), currency: product.currency || 'VND', isActive: Boolean(product.isActive),
+      };
+      state.productFormOpen = true; state.error = ''; state.notice = ''; render(); break;
+    }
+    case 'toggle-product-status': {
+      const product = state.products.find((item) => Number(item.id) === id);
+      if (!product) break;
+      try {
+        const result = await api(`/products/${id}`, { method: 'PATCH', body: JSON.stringify({ isActive: !product.isActive }) });
+        state.products = state.products.map((item) => Number(item.id) === id ? result.product : item);
+        state.notice = result.product.isActive ? `Đã đưa ${result.product.sku} vào kinh doanh.` : `Đã ngừng kinh doanh ${result.product.sku}.`;
+        state.error = '';
+      } catch (error) { state.error = error.message; }
+      render(); break;
+    }
     case 'toggle-user': {
       const target = state.users.find((item) => item.id === id);
       if (!target) break;
@@ -1434,6 +1565,24 @@ root.addEventListener('click', async (event) => {
       render();
       break;
     }
+    case 'summarize-activities': {
+      const customerId = state.detail?.account?.id;
+      if (!customerId || state.interactionSummary?.loading) break;
+      state.interactionSummary = { loading: true, data: null, error: '' };
+      render();
+      try {
+        const result = await api('/ai/summarize', {
+          method: 'POST', body: JSON.stringify({ customerId: Number(customerId) }),
+        });
+        state.interactionSummary = {
+          loading: false, data: result.summary, activitiesCount: result.activitiesCount, error: '',
+        };
+      } catch (error) {
+        state.interactionSummary = { loading: false, data: null, error: error.message };
+      }
+      render();
+      break;
+    }
     case 'gemini-create-task': {
       const actionIndex = Number(button.dataset.actionIndex);
       const actionItem = state.geminiSummary?.data?.recommended_actions?.[actionIndex];
@@ -1483,7 +1632,9 @@ root.addEventListener('click', async (event) => {
 });
 root.addEventListener('input', (event) => {
   const input = event.target;
-  if (input.dataset.quoteField) {
+  if (input.closest('form[data-form="product"]') && input.name) {
+    state.productDraft[input.name] = input.type === 'checkbox' ? input.checked : input.value;
+  } else if (input.dataset.quoteField) {
     const line = input.closest('.quote-line');
     const index = Number(line?.dataset.quoteLine);
     if (Number.isInteger(index) && state.quoteLines[index]) {
@@ -1502,6 +1653,13 @@ root.addEventListener('input', (event) => {
     const refreshed = root.querySelector('[data-input="admin-search"]');
     refreshed?.focus();
     refreshed?.setSelectionRange(pos, pos);
+  } else if (input.dataset.input === 'product-search') {
+    state.productSearch = input.value;
+    const pos = input.selectionStart;
+    render();
+    const refreshed = root.querySelector('[data-input="product-search"]');
+    refreshed?.focus();
+    refreshed?.setSelectionRange(pos, pos);
   } else if (input.dataset.input === 'customer-search') {
     state.customerSearch = input.value;
     state.customerPage = 1;
@@ -1513,11 +1671,16 @@ root.addEventListener('input', (event) => {
 });
 root.addEventListener('change', async (event) => {
   const input = event.target;
-  if (input.dataset.input === 'admin-role-filter') {
+  if (input.closest('form[data-form="product"]') && input.name) {
+    state.productDraft[input.name] = input.type === 'checkbox' ? input.checked : input.value;
+  } else if (input.dataset.input === 'admin-role-filter') {
     state.adminRoleFilter = input.value;
     render();
   } else if (input.dataset.input === 'admin-status-filter') {
     state.adminStatusFilter = input.value;
+    render();
+  } else if (input.dataset.input === 'product-status-filter') {
+    state.productStatusFilter = input.value;
     render();
   } else if (input.dataset.input === 'customer-status') {
     state.customerStatus = input.value;
@@ -1601,6 +1764,27 @@ root.addEventListener('submit', async (event) => {
       state.users = (await api('/admin/users')).users;
       state.userFormOpen = false;
       state.notice = 'Đã tạo tài khoản nhân viên.';
+      state.error = '';
+      render();
+    } else if (form.dataset.form === 'product') {
+      const payload = {
+        ...data,
+        unitPrice: data.unitPrice,
+        isActive: form.elements.isActive.checked,
+      };
+      const editing = state.productEdit;
+      const result = await api(editing ? `/products/${editing.id}` : '/products', {
+        method: editing ? 'PATCH' : 'POST',
+        body: JSON.stringify(payload),
+      });
+      const saved = result.product;
+      state.products = editing
+        ? state.products.map((product) => Number(product.id) === Number(saved.id) ? saved : product)
+        : [saved, ...state.products];
+      state.productFormOpen = false;
+      state.productEdit = null;
+      state.productDraft = { sku: '', name: '', description: '', unitPrice: '', currency: 'VND', isActive: true };
+      state.notice = editing ? `Đã cập nhật ${saved.sku}.` : `Đã thêm ${saved.sku} vào kho.`;
       state.error = '';
       render();
     } else if (form.dataset.form === 'lead') {
