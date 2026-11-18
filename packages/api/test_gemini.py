@@ -12,6 +12,46 @@ import gemini_service
 
 
 class GeminiServiceUnitTests(unittest.TestCase):
+    @patch("gemini_service.genai.Client")
+    def test_generate_text_sends_prompt_and_returns_string(self, mock_client_cls):
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_client.models.generate_content.return_value.text = "  Xin chào  "
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "test-key", "GEMINI_MODEL": "gemini-test"}):
+            result = gemini_service.generate_text("Trả lời xin chào")
+        self.assertEqual(result, "Xin chào")
+        mock_client.models.generate_content.assert_called_once_with(
+            model="gemini-test", contents="Trả lời xin chào"
+        )
+
+    @patch("gemini_service.genai.Client")
+    def test_generate_json_requests_json_and_decodes_result(self, mock_client_cls):
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_client.models.generate_content.return_value.text = '```json\n{"ok": true}\n```'
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "test-key", "GEMINI_MODEL": "gemini-test"}):
+            result = gemini_service.generate_json("Trả về JSON có trường ok")
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(
+            mock_client.models.generate_content.call_args.kwargs["config"],
+            {"response_mime_type": "application/json"},
+        )
+
+    def test_generate_helpers_reject_empty_prompt(self):
+        with self.assertRaises(ValueError):
+            gemini_service.generate_text("  ")
+        with self.assertRaises(ValueError):
+            gemini_service.generate_json("")
+
+    @patch("gemini_service.genai.Client")
+    def test_generate_json_rejects_invalid_json(self, mock_client_cls):
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_client.models.generate_content.return_value.text = "không phải JSON"
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "test-key"}):
+            with self.assertRaises(gemini_service.GeminiServiceError):
+                gemini_service.generate_json("JSON please")
+
     def test_clean_json_markdown(self):
         raw = '{"status": "ok"}'
         self.assertEqual(gemini_service.clean_json_markdown(raw), '{"status": "ok"}')
