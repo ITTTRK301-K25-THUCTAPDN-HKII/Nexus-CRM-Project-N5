@@ -42,6 +42,7 @@ from gemini_service import (
     GeminiConfigurationError,
     GeminiServiceError,
     generate_account_copilot_brief,
+    generate_activity_smart_summary,
 )
 load_dotenv(API_DIR / ".env")
 load_dotenv(ROOT / ".env", override=False)
@@ -180,10 +181,8 @@ def body_object():
         raise ValueError("Dữ liệu không hợp lệ.")
     return value
 
-
 def hash_token(token):
     return hashlib.sha256(token.encode()).hexdigest()
-
 
 def public_user(user):
     if not user:
@@ -3376,10 +3375,63 @@ def customer_account_gemini_summary(account_id):
         return json_error(f"Không thể phân tích dữ liệu: {str(err)}", 500)
 
 
+@app.post("/api/ai/summarize")
+@auth_required
+def ai_summarize_customer_activities():
+    """Create a privacy-filtered Smart Summary from all accessible customer activity."""
+    try:
+        data = body_object()
+        if set(data) - {"customerId", "accountId"}:
+            raise ValueError("Chỉ được gửi customerId.")
+        raw_customer_id = data.get("customerId", data.get("accountId"))
+        customer_id = positive_id(raw_customer_id)
+    except ValueError as error:
+        return validation_error([("body", str(error))])
+
+    if not can_access_customer(g.user, "accounts", customer_id):
+        return json_error("Không tìm thấy khách hàng hoặc bạn không có quyền truy cập.", 404)
+
+    account_rows = query("SELECT id FROM accounts WHERE id=%s", (customer_id,))
+    if not account_rows:
+        return json_error("Không tìm thấy khách hàng.", 404)
+
+    name_rows = query(
+        "SELECT name AS sensitiveName FROM accounts WHERE id=%s "
+        "UNION SELECT CONCAT_WS(' ',first_name,last_name) AS sensitiveName FROM contacts WHERE account_id=%s "
+        "UNION SELECT name AS sensitiveName FROM leads WHERE converted_account_id=%s",
+        (customer_id, customer_id, customer_id),
+    )
+    activity_scope = (
+        "(act.account_id=%s "
+        "OR act.contact_id IN (SELECT c.id FROM contacts c WHERE c.account_id=%s) "
+        "OR act.deal_id IN (SELECT d.id FROM deals d WHERE d.account_id=%s) "
+        "OR act.lead_id IN (SELECT l.id FROM leads l WHERE l.converted_account_id=%s))"
+    )
+    activity_values = [customer_id, customer_id, customer_id, customer_id]
+    if g.user["role"] != "Admin":
+        activity_scope += " AND act.user_id=%s"
+        activity_values.append(g.user["id"])
+    activities = query(
+        "SELECT act.activity_type AS type,act.subject,act.details,act.occurred_at AS occurredAt "
+        "FROM activities act WHERE " + activity_scope + " ORDER BY act.occurred_at,act.id",
+        tuple(activity_values),
+    )
+    if not activities:
+        return json_error("Khách hàng chưa có lịch sử tương tác để tóm tắt.", 422, code="NO_ACTIVITIES")
+    sensitive_names = [row.get("sensitiveName") for row in name_rows]
+    try:
+        summary = generate_activity_smart_summary(activities, sensitive_names)
+        return jsonify({"summary": summary, "activitiesCount": len(activities)})
+    except GeminiConfigurationError as error:
+        return json_error(str(error), 400, code="GEMINI_NOT_CONFIGURED")
+    except GeminiServiceError as error:
+        return json_error(str(error), 502, code="GEMINI_API_ERROR")
+    except Exception:
+        return json_error("Không thể tạo tóm tắt lúc này. Vui lòng thử lại sau.", 502, code="AI_SUMMARY_FAILED")
+
 @app.get("/styles.css")
 def styles():
     return send_from_directory(WEB_DIR / "src", "styles.css", mimetype="text/css")
-
 
 @app.get("/")
 @app.get("/login")
@@ -3398,11 +3450,9 @@ def styles():
 def web_app(**_kwargs):
     return render_template("index.html")
 
-
 @app.errorhandler(413)
 def request_too_large(_error):
     return json_error("Dữ liệu yêu cầu vượt quá giới hạn.", 413)
-
 
 @app.after_request
 def security_headers(response):
@@ -3415,13 +3465,11 @@ def security_headers(response):
     )
     return response
 
-
 @app.errorhandler(404)
 def not_found(_error):
     if request.path.startswith("/api/"):
         return json_error("Không tìm thấy tài nguyên.", 404)
     return render_template("index.html")
-
 
 @app.errorhandler(Exception)
 def internal_error(error):
@@ -3431,7 +3479,6 @@ def internal_error(error):
         return error
     app.logger.exception("Unhandled application error", exc_info=error)
     return json_error("Lỗi máy chủ.", 500)
-
 
 def send_telegram_message(chat_id, text):
     token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
@@ -3444,7 +3491,6 @@ def send_telegram_message(chat_id, text):
         result = json.loads(response.read().decode("utf-8"))
     if not result.get("ok"):
         raise RuntimeError(result.get("description", "Telegram API từ chối gửi tin nhắn."))
-
 
 def process_due_task_telegram_notifications(now=None):
     """Send reminders for open tasks due in 15–30 minutes, retrying at most 3 times."""
@@ -3472,7 +3518,7 @@ def process_due_task_telegram_notifications(now=None):
     for task in candidates:
         attempts = int(task["attempts"] or 0)
         message = (
-            f"⏰ Task sắp đến hạn\n{task['title']}\n"
+            f"Task sắp đến hạn\n{task['title']}\n"
             f"Ưu tiên: {task['priority']}\nĐến hạn: {task['dueAt']}"
         )
         while attempts < 3:
@@ -3496,7 +3542,6 @@ def process_due_task_telegram_notifications(now=None):
             failed += 1
     return {"sent": sent, "failed": failed, "skipped": 0}
 
-
 def _task_notification_loop():
     while not _task_notification_stop.is_set():
         try:
@@ -3504,7 +3549,6 @@ def _task_notification_loop():
         except Exception:
             app.logger.exception("Lỗi khi quét Task để gửi thông báo Telegram.")
         _task_notification_stop.wait(300)
-
 
 def start_task_notification_scheduler():
     global _task_notification_thread
@@ -3515,7 +3559,6 @@ def start_task_notification_scheduler():
         target=_task_notification_loop, name="task-telegram-scheduler", daemon=True,
     )
     _task_notification_thread.start()
-
 
 def seed_development_users():
     if NODE_ENV != "development":
@@ -3531,7 +3574,6 @@ def seed_development_users():
             "ON DUPLICATE KEY UPDATE id=id",
             (name, email, password_hash(password), role),
         )
-
 
 if __name__ == "__main__":
     seed_development_users()

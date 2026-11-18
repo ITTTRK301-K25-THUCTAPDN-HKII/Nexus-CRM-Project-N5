@@ -1252,6 +1252,23 @@ h2, h1, p { margin-top: 0; }
   font-size: 11px;
   color: #64748b;
 }
+.interaction-summary-trigger { flex-shrink: 0; min-height: 34px; font-size: 11px; }
+.interaction-summary { margin: 14px 0; padding: 16px; border: 1px solid #dce5f5; border-radius: 11px; background: #fbfcff; }
+.interaction-summary.loading, .interaction-summary.error { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.interaction-summary.loading { justify-content: flex-start; }
+.interaction-summary.loading strong, .interaction-summary.error strong { color: #34435d; font-size: 12px; }
+.interaction-summary.loading p, .interaction-summary.error p { margin: 4px 0 0; color: #718096; font-size: 11px; line-height: 1.5; }
+.interaction-summary-spinner { display: grid; width: 32px; height: 32px; flex: 0 0 32px; place-items: center; border-radius: 50%; background: #eef1ff; color: #536bd0; animation: pulse-spin 1.8s infinite ease-in-out; }
+.interaction-summary.error { border-color: #f2d9c4; background: #fffaf5; }
+.interaction-summary.error p { color: #9a5b28; }
+.interaction-summary-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.interaction-summary-heading h3 { margin: 4px 0 0; color: #263550; font-size: 14px; }
+.interaction-summary-heading > span { color: #7d8aa2; font-size: 10px; text-align: right; }
+.interaction-summary-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.interaction-summary-grid article { min-width: 0; padding: 12px; border: 1px solid #e8edf5; border-radius: 8px; background: #fff; }
+.interaction-summary-grid article > span { color: #536bd0; font-size: 10px; font-weight: 750; }
+.interaction-summary-grid article p { margin: 6px 0 0; color: #42516a; font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
+.interaction-summary-note { margin: 11px 0 0; color: #8a95a6; font-size: 10px; }
 .action-create-task {
   flex-shrink: 0;
   white-space: nowrap;
@@ -1298,6 +1315,10 @@ h2, h1, p { margin-top: 0; }
   .gemini-two-col { grid-template-columns: 1fr; }
   .gemini-action-item { flex-direction: column; align-items: flex-start; }
   .action-create-task { width: 100%; }
+  .interaction-summary-grid { grid-template-columns: 1fr; }
+  .interaction-summary-heading { align-items: flex-start; flex-direction: column; }
+  .interaction-summary-heading > span { text-align: left; }
+  .detail-section-heading { flex-wrap: wrap; }
 }
 
 /* ═══════════════════════════════════════════════════════════════════

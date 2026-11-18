@@ -65,6 +65,7 @@ const state = {
   accountName: '',
   detail: null,
   geminiSummary: null,
+  interactionSummary: null,
   geminiTaskNotice: '',
   emailCopied: false,
   mailbox: [],
@@ -148,6 +149,7 @@ function navigate(path, replace = false) {
   state.notice = '';
   state.detail = null;
   state.geminiSummary = null;
+  state.interactionSummary = null;
   state.geminiTaskNotice = '';
   state.emailCopied = false;
   render();
@@ -892,6 +894,19 @@ function activityTimelineItem(activity) {
     <div><strong>${escapeHtml(activity.subject)}</strong><span>${presentation.label} · ${escapeHtml(occurredAt)}</span>
     ${activity.details ? `<p>${escapeHtml(activity.details)}</p>` : ''}</div></div>`;
 }
+function interactionSummaryPanel() {
+  const summary = state.interactionSummary;
+  if (!summary) return '';
+  if (summary.loading) return `<div class="interaction-summary loading" role="status"><span class="interaction-summary-spinner">✦</span><div><strong>Gemini đang đọc lịch sử tương tác…</strong><p>Thông tin nhận dạng được lọc trước khi gửi phân tích.</p></div></div>`;
+  if (summary.error) return `<div class="interaction-summary error" role="alert"><div><strong>Chưa thể tạo tóm tắt</strong><p>${escapeHtml(summary.error)}</p></div><button class="secondary-button compact" data-action="summarize-activities">Thử lại</button></div>`;
+  const data = summary.data;
+  if (!data) return '';
+  return `<section class="interaction-summary result" aria-label="Tóm tắt tương tác AI">
+    <div class="interaction-summary-heading"><div><span class="eyebrow">AI SMART SUMMARY</span><h3>Tóm tắt lịch sử tương tác</h3></div><span>${Number(summary.activitiesCount) || 0} hoạt động · ${escapeHtml(data.model || 'Gemini')}</span></div>
+    <div class="interaction-summary-grid"><article><span>Nhu cầu</span><p>${escapeHtml(data.needs)}</p></article><article><span>Tâm lý khách hàng</span><p>${escapeHtml(data.sentiment)}</p></article><article><span>Bước tiếp theo</span><p>${escapeHtml(data.next_step)}</p></article></div>
+    <p class="interaction-summary-note">Nội dung do AI tạo chỉ để tham khảo. Hãy kiểm tra trước khi sử dụng.</p>
+  </section>`;
+}
 function geminiCopilotPanel() {
   const g = state.geminiSummary;
   if (!g) return '';
@@ -1037,7 +1052,8 @@ function accountDetailPage() {
     ${contacts.length ? `<div class="related-list">${contacts.map((c) => `<div class="related-item"><div class="avatar">${initials(c.firstName)}</div><div class="related-main"><strong>${escapeHtml(c.firstName)} ${escapeHtml(c.lastName)}</strong><span>${escapeHtml(c.jobTitle || 'Chưa có chức vụ')}</span><small>${escapeHtml(c.email || c.phone || 'Chưa có thông tin liên hệ')}</small></div></div>`).join('')}</div>` : '<p class="empty-state">Chưa có người liên hệ.</p>'}</article>
     <article class="table-card detail-section"><div class="detail-section-heading"><div class="icon-tile small-tile">◇</div><div><strong>Cơ hội kinh doanh</strong><span>${deals.length} cơ hội gần đây</span></div></div>
     ${deals.length ? `<div class="related-list">${deals.map((d) => `<div class="related-item deal-item"><div class="related-main"><strong>${escapeHtml(d.name)}</strong><span>${escapeHtml(d.stage)} · ${escapeHtml(d.probability)}%</span></div><strong>${escapeHtml(d.currency)} ${Number(d.amount).toLocaleString('vi-VN')}</strong></div>`).join('')}</div>` : '<p class="empty-state">Chưa có cơ hội kinh doanh.</p>'}</article>
-    <article class="table-card detail-section activity-section"><div class="detail-section-heading"><div class="icon-tile small-tile">◷</div><div><strong>Lịch sử tương tác</strong><span>${activities.length} hoạt động gần đây · mới nhất trước</span></div></div>
+    <article class="table-card detail-section activity-section"><div class="detail-section-heading"><div class="icon-tile small-tile">◷</div><div><strong>Lịch sử tương tác</strong><span>${activities.length} hoạt động gần đây · mới nhất trước</span></div><button class="secondary-button compact interaction-summary-trigger" data-action="summarize-activities" ${state.interactionSummary?.loading ? 'disabled' : ''}>${state.interactionSummary?.loading ? 'Đang tóm tắt…' : '✦ Tóm tắt AI'}</button></div>
+    ${interactionSummaryPanel()}
     ${activities.length ? `<div class="timeline activity-timeline">${activities.map(activityTimelineItem).join('')}</div>` : '<p class="empty-state">Chưa có lịch sử tương tác.</p>'}</article></section></main></div>`;
 }
 async function loadCustomers() {
@@ -1093,6 +1109,7 @@ async function loadDealCreateOptions() {
 }
 async function loadDetail(id) {
   state.geminiSummary = null;
+  state.interactionSummary = null;
   state.geminiTaskNotice = '';
   state.emailCopied = false;
   try {
@@ -1544,6 +1561,24 @@ root.addEventListener('click', async (event) => {
       } catch (err) {
         const isMissingKey = err.message && (err.message.includes('GEMINI_API_KEY') || err.message.includes('Chưa cấu hình'));
         state.geminiSummary = { loading: false, data: null, error: err.message, missingConfig: Boolean(isMissingKey) };
+      }
+      render();
+      break;
+    }
+    case 'summarize-activities': {
+      const customerId = state.detail?.account?.id;
+      if (!customerId || state.interactionSummary?.loading) break;
+      state.interactionSummary = { loading: true, data: null, error: '' };
+      render();
+      try {
+        const result = await api('/ai/summarize', {
+          method: 'POST', body: JSON.stringify({ customerId: Number(customerId) }),
+        });
+        state.interactionSummary = {
+          loading: false, data: result.summary, activitiesCount: result.activitiesCount, error: '',
+        };
+      } catch (error) {
+        state.interactionSummary = { loading: false, data: null, error: error.message };
       }
       render();
       break;

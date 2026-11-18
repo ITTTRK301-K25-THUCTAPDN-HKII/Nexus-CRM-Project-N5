@@ -48,6 +48,48 @@ class GeminiServiceUnitTests(unittest.TestCase):
         self.assertIn("Triển khai CRM", context)
         self.assertIn("Họp demo sản phẩm", context)
 
+    def test_activity_summary_context_redacts_sensitive_values_without_hiding_dates(self):
+        context = gemini_service.build_activity_summary_context(
+            [{
+                "type": "EMAIL",
+                "subject": "Acme Corporation cần tư vấn",
+                "details": "Liên hệ anh Nam tại nam@example.com hoặc 0912345678, mã hồ sơ 123456789. "
+                           "Trang https://example.test/reset?token=secret123 password=hunter2",
+                "occurredAt": "2026-11-18 10:30:00",
+            }],
+            ["Acme Corporation"],
+        )
+        self.assertNotIn("Acme Corporation", context)
+        self.assertNotIn("nam@example.com", context)
+        self.assertNotIn("0912345678", context)
+        self.assertNotIn("123456789", context)
+        self.assertNotIn("https://example.test", context)
+        self.assertNotIn("hunter2", context)
+        self.assertIn("[đã ẩn]", context)
+        self.assertIn("2026-11-18 10:30:00", context)
+
+    @patch("gemini_service.genai.Client")
+    def test_generate_activity_smart_summary_returns_three_fields_and_sends_redacted_context(self, mock_client_cls):
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_client.interactions.create.return_value.output_text = json.dumps({
+            "needs": "Tích hợp báo cáo bán hàng.",
+            "sentiment": "Tích cực; khách hàng chủ động hỏi về kế hoạch triển khai.",
+            "next_step": "Gửi lịch demo tích hợp trong tuần này.",
+        })
+        activities = [{
+            "type": "MEETING", "subject": "Acme Corporation hỏi về tích hợp",
+            "details": "Gọi 0901234567 hoặc mail a@acme.test.", "occurredAt": "2026-11-18 10:30:00",
+        }]
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "test-key", "GEMINI_MODEL": "gemini-test"}):
+            result = gemini_service.generate_activity_smart_summary(activities, ["Acme Corporation"])
+        self.assertEqual(set(result), {"needs", "sentiment", "next_step", "model"})
+        self.assertEqual(result["model"], "gemini-test")
+        prompt = mock_client.interactions.create.call_args.kwargs["input"]
+        self.assertNotIn("Acme Corporation", prompt)
+        self.assertNotIn("0901234567", prompt)
+        self.assertNotIn("a@acme.test", prompt)
+
     def test_missing_api_key_raises_configuration_error(self):
         with patch.dict(os.environ, {"GEMINI_API_KEY": ""}):
             with self.assertRaises(gemini_service.GeminiConfigurationError):
@@ -134,6 +176,70 @@ class GeminiApiEndpointTests(unittest.TestCase):
     def test_gemini_summary_requires_authentication(self):
         response = self.client.post("/api/customers/accounts/1/gemini-summary")
         self.assertEqual(response.status_code, 401)
+
+    def test_ai_activity_summary_requires_authentication(self):
+        response = self.client.post("/api/ai/summarize", json={"customerId": 1})
+        self.assertEqual(response.status_code, 401)
+
+    def test_ai_activity_summary_validates_customer_id(self):
+        user = self.authenticated_client()
+        with patch.object(api, "get_user", return_value=user):
+            response = self.client.post("/api/ai/summarize", json={"customerId": "bad"})
+        self.assertEqual(response.status_code, 400)
+
+    @patch("app.can_access_customer", return_value=False)
+    def test_ai_activity_summary_enforces_account_ownership(self, _mock_access):
+        user = self.authenticated_client()
+        with patch.object(api, "get_user", return_value=user):
+            response = self.client.post("/api/ai/summarize", json={"customerId": 44})
+        self.assertEqual(response.status_code, 404)
+
+    @patch("app.can_access_customer", return_value=True)
+    @patch("app.query")
+    @patch("app.generate_activity_smart_summary")
+    def test_ai_activity_summary_uses_full_customer_history_and_returns_three_insights(
+        self, mock_summary, mock_query, _mock_access
+    ):
+        user = self.authenticated_client()
+        activities = [
+            {"type": "CALL", "subject": "Initial call", "details": "Need reporting", "occurredAt": "2026-01-01"},
+            {"type": "MEETING", "subject": "Follow up", "details": "Interested in rollout", "occurredAt": "2026-02-01"},
+        ]
+        mock_query.side_effect = [
+            [{"id": 44}],
+            [{"sensitiveName": "Acme Corporation"}],
+            activities,
+        ]
+        mock_summary.return_value = {
+            "needs": "Báo cáo bán hàng.",
+            "sentiment": "Tích cực.",
+            "next_step": "Gửi kế hoạch triển khai.",
+            "model": "gemini-test",
+        }
+        with patch.object(api, "get_user", return_value=user):
+            response = self.client.post("/api/ai/summarize", json={"customerId": 44})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json["activitiesCount"], 2)
+        self.assertEqual(response.json["summary"]["needs"], "Báo cáo bán hàng.")
+        self.assertEqual(response.json["summary"]["sentiment"], "Tích cực.")
+        self.assertEqual(response.json["summary"]["next_step"], "Gửi kế hoạch triển khai.")
+        activity_query = mock_query.call_args_list[2]
+        self.assertNotIn("LIMIT", activity_query.args[0].upper())
+        self.assertIn("act.contact_id IN", activity_query.args[0])
+        self.assertIn("act.deal_id IN", activity_query.args[0])
+        self.assertIn("act.user_id=%s", activity_query.args[0])
+        self.assertEqual(activity_query.args[1], (44, 44, 44, 44, user["id"]))
+
+    @patch("app.can_access_customer", return_value=True)
+    @patch("app.query")
+    def test_ai_activity_summary_reports_empty_history_without_calling_ai(self, mock_query, _mock_access):
+        user = self.authenticated_client()
+        mock_query.side_effect = [[{"id": 44}], [], []]
+        with patch.object(api, "get_user", return_value=user), patch.object(api, "generate_activity_smart_summary") as mock_summary:
+            response = self.client.post("/api/ai/summarize", json={"customerId": 44})
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(response.json["code"], "NO_ACTIVITIES")
+        mock_summary.assert_not_called()
 
     def test_gemini_summary_invalid_id(self):
         user = self.authenticated_client()
