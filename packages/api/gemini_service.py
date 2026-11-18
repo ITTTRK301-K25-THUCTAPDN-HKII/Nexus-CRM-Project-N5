@@ -15,6 +15,72 @@ class GeminiServiceError(Exception):
     pass
 
 
+def _gemini_client_and_model():
+    """Create a configured Gemini client without exposing its key to callers."""
+    api_key = os.getenv("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        raise GeminiConfigurationError(
+            "Chưa cấu hình GEMINI_API_KEY. Vui lòng cấu hình Gemini AI để sử dụng tính năng này."
+        )
+    model_name = os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip()
+    if not model_name:
+        model_name = "gemini-3.8-flash"
+    return genai.Client(api_key=api_key), model_name
+
+
+def generate_text(prompt: str) -> str:
+    """Send a prompt to Gemini and return the generated text."""
+    if not isinstance(prompt, str) or not prompt.strip():
+        raise ValueError("Prompt không được để trống.")
+    client, model_name = _gemini_client_and_model()
+    try:
+        response = client.models.generate_content(model=model_name, contents=prompt)
+        result = getattr(response, "text", None)
+        if not isinstance(result, str) or not result.strip():
+            raise GeminiServiceError("Mô hình Gemini không trả về nội dung.")
+        return result.strip()
+    except GeminiConfigurationError:
+        raise
+    except GeminiServiceError:
+        raise
+    except Exception as exc:
+        _raise_gemini_error(exc)
+
+
+def generate_json(prompt: str) -> Any:
+    """Send a prompt requesting JSON and return the decoded JSON value."""
+    if not isinstance(prompt, str) or not prompt.strip():
+        raise ValueError("Prompt không được để trống.")
+    client, model_name = _gemini_client_and_model()
+    try:
+        response = client.models.generate_content(
+            model=model_name,
+            contents=prompt,
+            config={"response_mime_type": "application/json"},
+        )
+        result = getattr(response, "text", None)
+        if not isinstance(result, str) or not result.strip():
+            raise GeminiServiceError("Mô hình Gemini không trả về dữ liệu JSON.")
+        return json.loads(clean_json_markdown(result))
+    except GeminiConfigurationError:
+        raise
+    except json.JSONDecodeError as exc:
+        raise GeminiServiceError("Dữ liệu JSON từ Gemini không hợp lệ.") from exc
+    except GeminiServiceError:
+        raise
+    except Exception as exc:
+        _raise_gemini_error(exc)
+
+
+def _raise_gemini_error(exc: Exception) -> None:
+    error_msg = str(exc)
+    if "API_KEY_INVALID" in error_msg or "API key not valid" in error_msg:
+        raise GeminiConfigurationError("GEMINI_API_KEY không hợp lệ. Vui lòng kiểm tra lại cấu hình.") from exc
+    if "RESOURCE_EXHAUSTED" in error_msg or "quota" in error_msg.lower():
+        raise GeminiServiceError("Gemini đã hết hạn mức tạm thời. Vui lòng thử lại sau.") from exc
+    raise GeminiServiceError("Không thể kết nối dịch vụ Gemini.") from exc
+
+
 ACCOUNT_BRIEF_SCHEMA: Dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -213,7 +279,7 @@ def generate_activity_smart_summary(
             "Chưa cấu hình GEMINI_API_KEY. Vui lòng cấu hình Gemini AI để sử dụng tóm tắt tương tác."
         )
 
-    model_name = os.getenv("GEMINI_MODEL", "gemini-4-hydrogen").strip()
+    model_name = os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip()
     client = genai.Client(api_key=api_key)
     context_text = build_activity_summary_context(activities, sensitive_names)
     prompt = f"""Bạn là trợ lý CRM. Hãy phân tích lịch sử tương tác dưới đây và trả lời ngắn gọn bằng tiếng Việt.
@@ -276,7 +342,7 @@ def generate_account_copilot_brief(
             "Chưa cấu hình GEMINI_API_KEY. Vui lòng thêm GEMINI_API_KEY vào file .env để sử dụng Gemini AI."
         )
 
-    model_name = os.getenv("GEMINI_MODEL", "gemini-4-hydrogen").strip()
+    model_name = os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip()
     client = genai.Client(api_key=api_key)
 
     context_text = build_account_context(account, contacts, deals, activities)

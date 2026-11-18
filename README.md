@@ -83,9 +83,10 @@ Nexus CRM tích hợp Google Gemini API (`google-genai` SDK) để cung cấp tr
 2. Thêm vào file `.env`:
    ```env
    GEMINI_API_KEY=your_gemini_api_key_here
-   GEMINI_MODEL=gemini-4-hydrogen
+   GEMINI_MODEL=gemini-3.8-flash
    ```
-   *(Mặc định sử dụng model `gemini-4-hydrogen`; bạn cũng có thể tùy chỉnh sang `gemini-3.5-flash-lite` hoặc các model Gemini thế hệ mới khác).*
+   *(Model mặc định là `gemini-3.8-flash`; có thể thay bằng model Gemini đang được tài khoản của bạn hỗ trợ.)*
+3. Service `packages/api/gemini_service.py` có helper `generate_text(prompt)` trả chuỗi và `generate_json(prompt)` trả object/list Python đã parse từ JSON. Hai luồng Copilot và tóm tắt tương tác hiện dùng helper chuyên biệt có schema để kiểm tra kết quả.
 
 ## 3. Install Python dependencies
 
