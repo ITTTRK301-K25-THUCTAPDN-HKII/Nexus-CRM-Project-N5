@@ -3391,6 +3391,7 @@ def styles():
 @app.get("/deals")
 @app.get("/quotes")
 @app.get("/quotes/new")
+@app.get("/admin/products")
 @app.get("/tasks")
 @app.get("/calendar")
 @app.get("/workspace")
