@@ -2841,6 +2841,9 @@ def quote_pdf(quote_id):
         parsed_id = positive_id(quote_id)
     except ValueError as error:
         return json_error(str(error), 400)
+    disposition = request.args.get("disposition", "attachment")
+    if disposition not in ("inline", "attachment"):
+        return json_error("Kiểu hiển thị PDF không hợp lệ.", 400)
     detail = quote_detail(parsed_id, g.user)
     if not detail:
         return json_error("Không tìm thấy báo giá.", 404)
@@ -2851,8 +2854,12 @@ def quote_pdf(quote_id):
         return json_error(str(error), 503, code="PDF_FONT_UNAVAILABLE")
     response = make_response(pdf)
     response.headers["Content-Type"] = "application/pdf"
-    response.headers["Content-Disposition"] = f'attachment; filename="quote-{parsed_id}.pdf"'
+    response.headers["Content-Disposition"] = f'{disposition}; filename="quote-{parsed_id}.pdf"'
     response.headers["Content-Length"] = str(len(pdf))
+    response.headers["X-Frame-Options"] = "SAMEORIGIN"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; frame-ancestors 'self'; base-uri 'self'; form-action 'self'"
+    )
     return response
 
 

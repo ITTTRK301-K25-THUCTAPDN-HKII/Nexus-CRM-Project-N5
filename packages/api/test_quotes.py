@@ -429,6 +429,25 @@ class QuoteApiTests(unittest.TestCase):
         self.assertIn("attachment; filename=\"quote-21.pdf\"", response.headers["Content-Disposition"])
         self.assertTrue(response.data.startswith(b"%PDF-"))
 
+    def test_quote_pdf_can_be_rendered_inline_for_preview(self):
+        sale = self.authenticate()
+        with patch.object(api, "get_user", return_value=sale), patch.object(
+            api, "query", side_effect=self.detail_queries()
+        ):
+            response = self.client.get("/api/quotes/21/pdf?disposition=inline")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.mimetype, "application/pdf")
+        self.assertIn("inline; filename=\"quote-21.pdf\"", response.headers["Content-Disposition"])
+        self.assertEqual(response.headers["X-Frame-Options"], "SAMEORIGIN")
+        self.assertIn("frame-ancestors 'self'", response.headers["Content-Security-Policy"])
+        self.assertTrue(response.data.startswith(b"%PDF-"))
+
+    def test_quote_pdf_rejects_unknown_disposition(self):
+        sale = self.authenticate()
+        with patch.object(api, "get_user", return_value=sale):
+            response = self.client.get("/api/quotes/21/pdf?disposition=download")
+        self.assertEqual(response.status_code, 400)
+
     def test_quote_pdf_does_not_disclose_out_of_scope_quote(self):
         sale = self.authenticate()
         with patch.object(api, "get_user", return_value=sale), patch.object(api, "query", return_value=[]):
