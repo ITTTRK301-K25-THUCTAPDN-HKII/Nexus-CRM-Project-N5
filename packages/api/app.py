@@ -717,6 +717,209 @@ def health():
     return jsonify({"status": "ok"})
 
 
+ANALYTICS_DEAL_STAGES = (
+    ("PROSPECTING", "Tìm kiếm"),
+    ("QUALIFICATION", "Đánh giá"),
+    ("PROPOSAL", "Đề xuất"),
+    ("NEGOTIATION", "Đàm phán"),
+    ("WON", "Thành công"),
+    ("LOST", "Thất bại"),
+)
+ANALYTICS_LEAD_STAGES = (
+    ("NEW", "Mới"),
+    ("CONTACTED", "Đã liên hệ"),
+    ("QUALIFIED", "Tiềm năng"),
+    ("CONVERTED", "Đã chuyển đổi"),
+    ("UNQUALIFIED", "Không phù hợp"),
+)
+
+
+def analytics_period():
+    if set(request.args) - {"from", "to"}:
+        raise ValueError("Chỉ chấp nhận tham số from và to theo định dạng YYYY-MM-DD.")
+    parsed = {}
+    for field in ("from", "to"):
+        value = request.args.get(field)
+        if value is None:
+            parsed[field] = None
+            continue
+        try:
+            date_value = date.fromisoformat(value)
+        except (TypeError, ValueError) as error:
+            raise ValueError(f"Tham số {field} cần theo định dạng YYYY-MM-DD.") from error
+        if date_value.isoformat() != value:
+            raise ValueError(f"Tham số {field} cần theo định dạng YYYY-MM-DD.")
+        parsed[field] = date_value
+    if parsed["from"] and parsed["to"] and parsed["from"] > parsed["to"]:
+        raise ValueError("Tham số from không được sau to.")
+    return parsed
+
+
+def analytics_created_filter(alias, period):
+    conditions = []
+    values = []
+    if period["from"]:
+        conditions.append(f"{alias}.created_at >= %s")
+        values.append(period["from"])
+    if period["to"]:
+        conditions.append(f"{alias}.created_at < %s")
+        values.append(period["to"] + timedelta(days=1))
+    return conditions, values
+
+
+def analytics_share(count, total):
+    return round(count * 100 / total, 2) if total else 0.0
+
+
+@app.get("/api/analytics/kpis")
+@auth_required
+def sales_kpis():
+    try:
+        period = analytics_period()
+    except ValueError as error:
+        return json_error(str(error), 400)
+
+    deal_scope_sql, deal_values = deal_scope(g.user, "d.owner_user_id")
+    deal_filters, deal_dates = analytics_created_filter("d", period)
+    if deal_scope_sql:
+        deal_filters.insert(0, deal_scope_sql)
+    deal_where = " WHERE " + " AND ".join(deal_filters) if deal_filters else ""
+    deal_rows = query(
+        "SELECT d.currency,COUNT(*) AS totalDeals,"
+        "SUM(CASE WHEN d.stage NOT IN ('WON','LOST') THEN 1 ELSE 0 END) AS openDeals,"
+        "SUM(CASE WHEN d.stage='WON' THEN 1 ELSE 0 END) AS wonDeals,"
+        "SUM(CASE WHEN d.stage='LOST' THEN 1 ELSE 0 END) AS lostDeals,"
+        "COALESCE(SUM(CASE WHEN d.stage NOT IN ('WON','LOST') THEN d.amount ELSE 0 END),0) AS pipelineValue,"
+        "COALESCE(SUM(CASE WHEN d.stage='WON' THEN COALESCE(d.closed_amount,d.amount) ELSE 0 END),0) AS wonValue "
+        "FROM deals d" + deal_where + " GROUP BY d.currency ORDER BY d.currency",
+        tuple(deal_values + deal_dates),
+    )
+
+    lead_scope_sql, lead_values = ownership(g.user, "l.owner_user_id")
+    lead_filters, lead_dates = analytics_created_filter("l", period)
+    lead_filters.insert(0, "l.deleted_at IS NULL")
+    if lead_scope_sql:
+        lead_filters.append(lead_scope_sql)
+    lead_where = " WHERE " + " AND ".join(lead_filters)
+    lead_rows = query(
+        "SELECT COUNT(*) AS totalLeads,"
+        "COALESCE(SUM(CASE WHEN l.status='CONVERTED' THEN 1 ELSE 0 END),0) AS convertedLeads "
+        "FROM leads l" + lead_where,
+        tuple(lead_dates + lead_values),
+    )
+
+    total_deals = sum(int(row["totalDeals"] or 0) for row in deal_rows)
+    open_deals = sum(int(row["openDeals"] or 0) for row in deal_rows)
+    won_deals = sum(int(row["wonDeals"] or 0) for row in deal_rows)
+    lost_deals = sum(int(row["lostDeals"] or 0) for row in deal_rows)
+    total_leads = int(lead_rows[0]["totalLeads"] or 0)
+    converted_leads = int(lead_rows[0]["convertedLeads"] or 0)
+    closed_deals = won_deals + lost_deals
+    return jsonify({
+        "period": {
+            "from": period["from"].isoformat() if period["from"] else None,
+            "to": period["to"].isoformat() if period["to"] else None,
+        },
+        "deals": {
+            "total": total_deals,
+            "open": open_deals,
+            "won": won_deals,
+            "lost": lost_deals,
+            "winRate": analytics_share(won_deals, closed_deals),
+        },
+        "leads": {
+            "total": total_leads,
+            "converted": converted_leads,
+            "conversionRate": analytics_share(converted_leads, total_leads),
+        },
+        "revenueByCurrency": [{
+            "currency": row["currency"],
+            "pipelineValue": row["pipelineValue"] or 0,
+            "wonValue": row["wonValue"] or 0,
+        } for row in deal_rows],
+    })
+
+
+@app.get("/api/analytics/funnel")
+@auth_required
+def sales_funnel():
+    try:
+        period = analytics_period()
+    except ValueError as error:
+        return json_error(str(error), 400)
+
+    deal_scope_sql, deal_values = deal_scope(g.user, "d.owner_user_id")
+    deal_filters, deal_dates = analytics_created_filter("d", period)
+    if deal_scope_sql:
+        deal_filters.insert(0, deal_scope_sql)
+    deal_where = " WHERE " + " AND ".join(deal_filters) if deal_filters else ""
+    deal_rows = query(
+        "SELECT d.stage,d.currency,COUNT(*) AS dealCount,"
+        "COALESCE(SUM(CASE WHEN d.stage='WON' THEN COALESCE(d.closed_amount,d.amount) "
+        "ELSE d.amount END),0) AS stageValue "
+        "FROM deals d" + deal_where + " GROUP BY d.stage,d.currency ORDER BY d.stage,d.currency",
+        tuple(deal_values + deal_dates),
+    )
+
+    lead_scope_sql, lead_values = ownership(g.user, "l.owner_user_id")
+    lead_filters, lead_dates = analytics_created_filter("l", period)
+    lead_filters.insert(0, "l.deleted_at IS NULL")
+    if lead_scope_sql:
+        lead_filters.append(lead_scope_sql)
+    lead_where = " WHERE " + " AND ".join(lead_filters)
+    lead_rows = query(
+        "SELECT l.status,COUNT(*) AS leadCount FROM leads l" + lead_where
+        + " GROUP BY l.status",
+        tuple(lead_dates + lead_values),
+    )
+
+    leads_by_status = {row["status"]: int(row["leadCount"] or 0) for row in lead_rows}
+    total_leads = sum(leads_by_status.values())
+    deals_by_stage = {}
+    for row in deal_rows:
+        stage = deals_by_stage.setdefault(row["stage"], {"count": 0, "amountByCurrency": []})
+        stage["count"] += int(row["dealCount"] or 0)
+        stage["amountByCurrency"].append({
+            "currency": row["currency"],
+            "amount": row["stageValue"] or 0,
+        })
+    total_deals = sum(stage["count"] for stage in deals_by_stage.values())
+    won_deals = deals_by_stage.get("WON", {}).get("count", 0)
+    lost_deals = deals_by_stage.get("LOST", {}).get("count", 0)
+    closed_deals = won_deals + lost_deals
+    return jsonify({
+        "period": {
+            "from": period["from"].isoformat() if period["from"] else None,
+            "to": period["to"].isoformat() if period["to"] else None,
+        },
+        "leadFunnel": [{
+            "status": status,
+            "label": label,
+            "count": leads_by_status.get(status, 0),
+            "sharePercent": analytics_share(leads_by_status.get(status, 0), total_leads),
+        } for status, label in ANALYTICS_LEAD_STAGES],
+        "dealFunnel": [{
+            "stage": stage,
+            "label": label,
+            "count": deals_by_stage.get(stage, {}).get("count", 0),
+            "sharePercent": analytics_share(
+                deals_by_stage.get(stage, {}).get("count", 0), total_deals
+            ),
+            "amountByCurrency": deals_by_stage.get(stage, {}).get("amountByCurrency", []),
+        } for stage, label in ANALYTICS_DEAL_STAGES],
+        "conversion": {
+            "leads": analytics_share(leads_by_status.get("CONVERTED", 0), total_leads),
+            "deals": analytics_share(won_deals, closed_deals),
+        },
+        "totals": {
+            "leads": total_leads,
+            "deals": total_deals,
+            "wonDeals": won_deals,
+            "lostDeals": lost_deals,
+        },
+    })
+
+
 @app.get("/api/deals")
 @auth_required
 def deals_list():

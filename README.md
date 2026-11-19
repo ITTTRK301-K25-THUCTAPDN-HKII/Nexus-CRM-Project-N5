@@ -61,6 +61,16 @@ Copy-Item .env.example .env
 The default database name is `nexus_crm`. Keep `.env` on your computer; do not
 commit it or share its credentials.
 
+## Sales analytics APIs
+
+Authenticated users can request sales KPIs with `GET /api/analytics/kpis` or
+lead/deal funnel breakdowns with `GET /api/analytics/funnel`. Both endpoints
+accept optional inclusive `from` and `to` query parameters in `YYYY-MM-DD`
+format to filter records by creation date and apply the caller's existing
+ownership scope. KPI and funnel values are reported separately per currency;
+deal win rate is won deals divided by closed (won or lost) deals, while lead
+conversion rate is converted leads divided by active leads.
+
 ## Telegram task reminders
 
 Set `TELEGRAM_BOT_TOKEN` in `.env` and set each Sale user's
