@@ -64,6 +64,16 @@ class GeminiServiceUnitTests(unittest.TestCase):
                 gemini_service.generate_activity_smart_summary([])
 
     @patch("gemini_service.genai.Client")
+    def test_generate_account_copilot_turns_timeout_into_clear_error(self, mock_client_cls):
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_client.interactions.create.side_effect = TimeoutError("request timed out")
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "test-key", "GEMINI_MODEL": "gemini-test"}):
+            with self.assertRaisesRegex(gemini_service.GeminiServiceError, "tối đa 120 giây"):
+                gemini_service.generate_account_copilot_brief({}, [], [], [])
+        self.assertEqual(mock_client.interactions.create.call_args.kwargs["timeout"], 120)
+
+    @patch("gemini_service.genai.Client")
     def test_generate_json_rejects_invalid_json(self, mock_client_cls):
         mock_client = MagicMock()
         mock_client_cls.return_value = mock_client

@@ -78,6 +78,11 @@ def _raise_gemini_error(exc: Exception) -> None:
         raise GeminiConfigurationError("GEMINI_API_KEY không hợp lệ. Vui lòng kiểm tra lại cấu hình.") from exc
     if "RESOURCE_EXHAUSTED" in error_msg or "quota" in error_msg.lower():
         raise GeminiServiceError("Gemini đã hết hạn mức tạm thời. Vui lòng thử lại sau.") from exc
+    if any(marker in error_msg.lower() for marker in ("timed out", "timeout", "deadline exceeded")):
+        raise GeminiServiceError(
+            "Gemini phản hồi quá lâu (đã chờ tối đa 120 giây). Hãy thử lại sau; "
+            "nếu vẫn xảy ra, kiểm tra kết nối mạng hoặc chọn model khác."
+        ) from exc
     if any(marker in error_msg.lower() for marker in (
         "503", "service_unavailable", "service unavailable", "high demand", "temporarily unavailable"
     )):
@@ -303,6 +308,7 @@ Không tạo thêm dữ liệu cá nhân hoặc chi tiết không có trong lị
         interaction = client.interactions.create(
             model=model_name,
             input=prompt,
+            timeout=120,
             response_format={
                 "type": "text",
                 "mime_type": "application/json",
@@ -384,6 +390,7 @@ Trả về kết quả bằng định dạng JSON tuân thủ schema được cu
         interaction = client.interactions.create(
             model=model_name,
             input=prompt,
+            timeout=120,
             response_format={
                 "type": "text",
                 "mime_type": "application/json",
