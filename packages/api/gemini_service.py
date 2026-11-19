@@ -78,6 +78,13 @@ def _raise_gemini_error(exc: Exception) -> None:
         raise GeminiConfigurationError("GEMINI_API_KEY không hợp lệ. Vui lòng kiểm tra lại cấu hình.") from exc
     if "RESOURCE_EXHAUSTED" in error_msg or "quota" in error_msg.lower():
         raise GeminiServiceError("Gemini đã hết hạn mức tạm thời. Vui lòng thử lại sau.") from exc
+    if any(marker in error_msg.lower() for marker in (
+        "503", "service_unavailable", "service unavailable", "high demand", "temporarily unavailable"
+    )):
+        raise GeminiServiceError(
+            "Gemini đang quá tải tạm thời (HTTP 503). Bạn hãy chờ một lúc rồi chọn Thử lại; "
+            "nếu vẫn lỗi, đổi GEMINI_MODEL sang model khác đang được Google AI Studio hỗ trợ và khởi động lại backend."
+        ) from exc
     raise GeminiServiceError("Không thể kết nối dịch vụ Gemini.") from exc
 
 
@@ -320,12 +327,7 @@ Không tạo thêm dữ liệu cá nhân hoặc chi tiết không có trong lị
     except GeminiServiceError:
         raise
     except Exception as exc:
-        error_msg = str(exc)
-        if "API_KEY_INVALID" in error_msg or "API key not valid" in error_msg:
-            raise GeminiConfigurationError("GEMINI_API_KEY không hợp lệ. Vui lòng kiểm tra lại cấu hình.") from exc
-        if "RESOURCE_EXHAUSTED" in error_msg or "quota" in error_msg.lower():
-            raise GeminiServiceError("Gemini đã hết hạn mức tạm thời. Vui lòng thử lại sau.") from exc
-        raise GeminiServiceError("Không thể kết nối dịch vụ Gemini để tạo tóm tắt.") from exc
+        _raise_gemini_error(exc)
 
 
 def generate_account_copilot_brief(
@@ -401,9 +403,4 @@ Trả về kết quả bằng định dạng JSON tuân thủ schema được cu
     except json.JSONDecodeError as exc:
         raise GeminiServiceError(f"Dữ liệu JSON từ Gemini không hợp lệ: {str(exc)}") from exc
     except Exception as exc:
-        error_msg = str(exc)
-        if "API_KEY_INVALID" in error_msg or "API key not valid" in error_msg:
-            raise GeminiConfigurationError("GEMINI_API_KEY không hợp lệ. Vui lòng kiểm tra lại API key trong .env.") from exc
-        if "RESOURCE_EXHAUSTED" in error_msg or "quota" in error_msg.lower():
-            raise GeminiServiceError("Đã vượt quá giới hạn quota gọi Gemini API. Vui lòng thử lại sau.") from exc
-        raise GeminiServiceError(f"Lỗi khi gọi Gemini API: {error_msg}") from exc
+        _raise_gemini_error(exc)

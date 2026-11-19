@@ -44,6 +44,26 @@ class GeminiServiceUnitTests(unittest.TestCase):
             gemini_service.generate_json("")
 
     @patch("gemini_service.genai.Client")
+    def test_generate_account_copilot_explains_temporary_503(self, mock_client_cls):
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_client.interactions.create.side_effect = RuntimeError(
+            "Error code: 503 service_unavailable: currently experiencing high demand"
+        )
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "test-key", "GEMINI_MODEL": "gemini-4-hydrogen"}):
+            with self.assertRaisesRegex(gemini_service.GeminiServiceError, "quá tải tạm thời.*503"):
+                gemini_service.generate_account_copilot_brief({}, [], [], [])
+
+    @patch("gemini_service.genai.Client")
+    def test_generate_activity_summary_explains_temporary_503(self, mock_client_cls):
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_client.interactions.create.side_effect = RuntimeError("503 service unavailable")
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "test-key", "GEMINI_MODEL": "gemini-test"}):
+            with self.assertRaisesRegex(gemini_service.GeminiServiceError, "quá tải tạm thời.*503"):
+                gemini_service.generate_activity_smart_summary([])
+
+    @patch("gemini_service.genai.Client")
     def test_generate_json_rejects_invalid_json(self, mock_client_cls):
         mock_client = MagicMock()
         mock_client_cls.return_value = mock_client

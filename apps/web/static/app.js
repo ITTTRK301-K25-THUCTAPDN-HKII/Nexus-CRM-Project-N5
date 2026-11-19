@@ -914,7 +914,15 @@ function activityTimelineItem(activity) {
 function interactionSummaryPanel() {
   const summary = state.interactionSummary;
   if (!summary) return '';
-  if (summary.loading) return `<div class="interaction-summary loading" role="status"><span class="interaction-summary-spinner">✦</span><div><strong>Gemini đang đọc lịch sử tương tác…</strong><p>Thông tin nhận dạng được lọc trước khi gửi phân tích.</p></div></div>`;
+  if (summary.loading) return `<section class="interaction-summary loading" role="status" aria-label="Đang tạo tóm tắt AI" aria-live="polite">
+    <div class="interaction-summary-heading"><div><span class="eyebrow">AI SMART SUMMARY</span><h3>Gemini đang đọc lịch sử tương tác…</h3></div><span>Đang xử lý</span></div>
+    <div class="interaction-summary-grid interaction-summary-skeleton" aria-hidden="true">
+      <article><span class="summary-skeleton-line short"></span><i class="summary-skeleton-line"></i><i class="summary-skeleton-line medium"></i></article>
+      <article><span class="summary-skeleton-line short"></span><i class="summary-skeleton-line"></i><i class="summary-skeleton-line medium"></i></article>
+      <article><span class="summary-skeleton-line short"></span><i class="summary-skeleton-line"></i><i class="summary-skeleton-line medium"></i></article>
+    </div>
+    <p class="interaction-summary-note">Thông tin nhận dạng được lọc trước khi gửi phân tích.</p>
+  </section>`;
   if (summary.error) return `<div class="interaction-summary error" role="alert"><div><strong>Chưa thể tạo tóm tắt</strong><p>${escapeHtml(summary.error)}</p></div><button class="secondary-button compact" data-action="summarize-activities">Thử lại</button></div>`;
   const data = summary.data;
   if (!data) return '';
