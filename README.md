@@ -71,6 +71,14 @@ ownership scope. KPI and funnel values are reported separately per currency;
 deal win rate is won deals divided by closed (won or lost) deals, while lead
 conversion rate is converted leads divided by active leads.
 
+Managers and Admins can request per-Sale performance with
+`GET /api/analytics/sales-performance?period=month&date=2026-11-20`. Supported
+periods are `day`, `week` (Monday through Sunday), `month`, and `quarter`; `date`
+selects the day inside the requested period and defaults to today. The response
+returns deals created/opened in the period, deals won/lost by `closed_date`,
+won revenue grouped by currency, and leads created/converted in the period for
+each Sale. Revenue is not combined across currencies.
+
 ## Telegram task reminders
 
 Set `TELEGRAM_BOT_TOKEN` in `.env` and set each Sale user's
