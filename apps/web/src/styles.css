@@ -316,6 +316,16 @@ h2, h1, p { margin-top: 0; }
 .emerald-wrap { background: #ecfdf5; color: #059669; }
 .blue-wrap { background: #eff6ff; color: #2563eb; }
 .rose-wrap { background: #fff1f2; color: #e11d48; }
+.dashboard-content { min-width: 0; }
+.dashboard-content .topbar { align-items: center; }
+.dashboard-content .topbar-sub { margin: 8px 0 0; color: #64748b; font-size: 13px; }
+.dashboard-currency-card { align-items: flex-start; min-height: 148px; }
+.dashboard-currency-card .kpi-info { min-width: 0; }
+.dashboard-money-row { display: flex; align-items: baseline; gap: 7px; color: #0f172a; line-height: 1.3; }
+.dashboard-money-row strong { font-size: 20px; font-weight: 800; overflow-wrap: anywhere; }
+.dashboard-money-row small { color: #64748b; font-size: 11px; font-weight: 700; }
+.dashboard-empty-value { font-size: 16px; font-weight: 700; color: #64748b; }
+.dashboard-updated { text-align: right; }
 
 /* 4. Modern Form Card */
 .modern-form-card {
