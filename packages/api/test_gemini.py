@@ -194,9 +194,16 @@ class GeminiServiceUnitTests(unittest.TestCase):
                 }
             ],
             "email_draft": {
-                "recipient_name": "Anh Bình",
+                "recipient_name": "Quý đối tác",
                 "subject": "Follow-up buổi demo giải pháp Nexus CRM",
-                "body": "Chào anh Bình,\nCảm ơn anh đã tham gia buổi demo hôm qua...",
+                "body": "Chào Quý đối tác,\nCảm ơn anh/chị đã trao đổi về giải pháp...",
+            },
+            "call_script": {
+                "opening": "Chào anh/chị, tôi xin phép trao đổi về giải pháp đang quan tâm.",
+                "discovery_questions": ["Ưu tiên nào cần giải quyết trước?", "Anh/chị còn băn khoăn điểm nào?"],
+                "talking_points": ["Xác nhận nhu cầu và giai đoạn triển khai."],
+                "objection_responses": ["Tôi có thể làm rõ thêm phần anh/chị đang cân nhắc."],
+                "closing": "Anh/chị có muốn thống nhất bước tiếp theo phù hợp không?",
             },
         }
 
@@ -206,14 +213,21 @@ class GeminiServiceUnitTests(unittest.TestCase):
 
         with patch.dict(os.environ, {"GEMINI_API_KEY": "test-key-12345", "GEMINI_MODEL": "gemini-4-hydrogen"}):
             res = gemini_service.generate_account_copilot_brief(
-                account={"name": "Acme Corp"},
-                contacts=[],
-                deals=[],
-                activities=[],
+                account={"name": "Acme Corp", "email": "ceo@acme.test", "phone": "+84912345678", "billingAddress": "123 Main Street"},
+                contacts=[{"firstName": "Binh", "lastName": "Nguyen", "email": "binh@acme.test", "phone": "0912345678", "jobTitle": "CEO"}],
+                deals=[{"name": "CRM Renewal", "stage": "NEGOTIATION", "amount": 12000, "currency": "USD"}],
+                activities=[{"type": "CALL", "subject": "Discussed renewal", "details": "Call 0912345678"}],
             )
             self.assertEqual(res["relationship_health"]["score"], 85)
             self.assertEqual(res["model"], "gemini-4-hydrogen")
             self.assertEqual(len(res["recommended_actions"]), 1)
+            self.assertEqual(res["call_script"]["closing"], expected_result["call_script"]["closing"])
+            prompt = mock_client.interactions.create.call_args.kwargs["input"]
+            self.assertIn("Kịch bản cuộc gọi", prompt)
+            self.assertIn("NEGOTIATION", prompt)
+            for private_value in ("Acme Corp", "ceo@acme.test", "+84912345678", "123 Main Street", "Binh Nguyen", "binh@acme.test", "0912345678"):
+                self.assertNotIn(private_value, prompt)
+            self.assertIn("Quý đối tác", res["email_draft"]["recipient_name"])
 
 
 class GeminiApiEndpointTests(unittest.TestCase):
@@ -359,6 +373,7 @@ class GeminiApiEndpointTests(unittest.TestCase):
             "opportunities": [],
             "recommended_actions": [],
             "email_draft": {"recipient_name": "A", "subject": "B", "body": "C"},
+            "call_script": {"opening": "Mở đầu", "discovery_questions": [], "talking_points": [], "objection_responses": [], "closing": "Kết thúc"},
         }
 
         with patch.object(api, "get_user", return_value=user):
@@ -367,6 +382,7 @@ class GeminiApiEndpointTests(unittest.TestCase):
             data = response.get_json()
             self.assertIn("summary", data)
             self.assertEqual(data["summary"]["relationship_health"]["score"], 80)
+            self.assertIn("call_script", data["summary"])
 
 
 if __name__ == "__main__":
