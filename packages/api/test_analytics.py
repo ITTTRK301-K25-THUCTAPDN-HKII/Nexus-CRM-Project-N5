@@ -132,6 +132,94 @@ class SalesAnalyticsApiTests(unittest.TestCase):
             with self.subTest(endpoint=endpoint):
                 self.assertEqual(self.client.get(endpoint).status_code, 401)
 
+    def test_sales_performance_groups_results_and_filters_by_requested_quarter(self):
+        manager = self.authenticate(role="Manager", user_id=3)
+        deal_rows = [
+            {
+                "saleId": 8, "saleName": "Sale A", "currency": "USD",
+                "dealsCreated": 3, "openDealsCreated": 1, "wonDealsClosed": 2,
+                "lostDealsClosed": 1, "wonAmount": Decimal("1500.50"),
+            },
+            {
+                "saleId": 8, "saleName": "Sale A", "currency": "VND",
+                "dealsCreated": 1, "openDealsCreated": 1, "wonDealsClosed": 0,
+                "lostDealsClosed": 0, "wonAmount": Decimal("0"),
+            },
+            {
+                "saleId": 9, "saleName": "Sale B", "currency": None,
+                "dealsCreated": 0, "openDealsCreated": 0, "wonDealsClosed": 0,
+                "lostDealsClosed": 0, "wonAmount": Decimal("0"),
+            },
+        ]
+        lead_rows = [
+            {"saleId": 8, "leadsCreated": 4, "convertedLeads": 2},
+            {"saleId": 9, "leadsCreated": 0, "convertedLeads": 0},
+        ]
+        with patch.object(api, "get_user", return_value=manager), patch.object(
+            api, "query", side_effect=[deal_rows, lead_rows]
+        ) as query:
+            response = self.client.get(
+                "/api/analytics/sales-performance?period=quarter&date=2026-11-18"
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json["period"], {
+            "type": "quarter", "date": "2026-11-18", "from": "2026-10-01", "to": "2026-12-31",
+        })
+        sale_a, sale_b = response.json["sales"]
+        self.assertEqual(sale_a["saleName"], "Sale A")
+        self.assertEqual(sale_a["deals"], {
+            "created": 4, "openCreated": 2, "wonClosed": 2, "lostClosed": 1, "winRate": 66.67,
+        })
+        self.assertEqual(sale_a["leads"], {
+            "created": 4, "converted": 2, "conversionRate": 50.0,
+        })
+        self.assertEqual([item["currency"] for item in sale_a["revenueByCurrency"]], ["USD", "VND"])
+        self.assertEqual(sale_b["deals"]["created"], 0)
+        self.assertEqual(sale_b["leads"]["conversionRate"], 0.0)
+        self.assertIn("u.role='Sale'", query.call_args_list[0].args[0])
+        self.assertEqual(query.call_args_list[0].args[1], (
+            date(2026, 10, 1), date(2027, 1, 1), date(2026, 10, 1), date(2027, 1, 1),
+            date(2026, 10, 1), date(2027, 1, 1), date(2026, 10, 1), date(2027, 1, 1),
+            date(2026, 10, 1), date(2027, 1, 1),
+        ))
+
+    def test_sales_performance_supports_day_week_and_month_boundaries(self):
+        self.authenticate(role="Manager", user_id=3)
+        expected = {
+            "day": ("2026-11-18", "2026-11-18"),
+            "week": ("2026-11-16", "2026-11-22"),
+            "month": ("2026-11-01", "2026-11-30"),
+        }
+        for period, (start, end) in expected.items():
+            manager = {"id": 3, "role": "Manager", "status": "ACTIVE"}
+            with self.subTest(period=period), patch.object(api, "get_user", return_value=manager), patch.object(
+                api, "query", side_effect=[[], []]
+            ):
+                response = self.client.get(
+                    f"/api/analytics/sales-performance?period={period}&date=2026-11-18"
+                )
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.json["period"]["from"], start)
+            self.assertEqual(response.json["period"]["to"], end)
+
+    def test_sales_performance_is_manager_or_admin_only_and_validates_filters(self):
+        self.authenticate(role="Sale", user_id=8)
+        sale = {"id": 8, "role": "Sale", "status": "ACTIVE"}
+        manager = {"id": 3, "role": "Manager", "status": "ACTIVE"}
+        with patch.object(api, "get_user", return_value=sale):
+            forbidden = self.client.get("/api/analytics/sales-performance")
+        with patch.object(api, "get_user", return_value=manager), patch.object(api, "query") as query:
+            invalid_period = self.client.get("/api/analytics/sales-performance?period=year")
+            invalid_date = self.client.get("/api/analytics/sales-performance?date=2026-02-30")
+            unknown_filter = self.client.get("/api/analytics/sales-performance?period=month&currency=USD")
+
+        self.assertEqual(forbidden.status_code, 403)
+        self.assertEqual(invalid_period.status_code, 400)
+        self.assertEqual(invalid_date.status_code, 400)
+        self.assertEqual(unknown_filter.status_code, 400)
+        query.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

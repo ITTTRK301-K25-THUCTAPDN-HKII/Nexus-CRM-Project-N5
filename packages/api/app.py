@@ -39,6 +39,7 @@ API_DIR = Path(__file__).resolve().parent
 if str(API_DIR) not in sys.path:
     sys.path.insert(0, str(API_DIR))
 from gemini_service import (
+    GeminiConfigurationError,
     generate_account_copilot_brief,
     generate_activity_smart_summary,
 )
@@ -769,6 +770,47 @@ def analytics_share(count, total):
     return round(count * 100 / total, 2) if total else 0.0
 
 
+def sales_performance_period():
+    if set(request.args) - {"period", "date"}:
+        raise ValueError("Chỉ chấp nhận period (day, week, month, quarter) và date (YYYY-MM-DD).")
+    period_type = request.args.get("period", "month")
+    if period_type not in ("day", "week", "month", "quarter"):
+        raise ValueError("period phải là day, week, month hoặc quarter.")
+    raw_date = request.args.get("date")
+    if raw_date is None:
+        selected_date = date.today()
+    else:
+        try:
+            selected_date = date.fromisoformat(raw_date)
+        except (TypeError, ValueError) as error:
+            raise ValueError("date cần theo định dạng YYYY-MM-DD.") from error
+        if selected_date.isoformat() != raw_date:
+            raise ValueError("date cần theo định dạng YYYY-MM-DD.")
+
+    if period_type == "day":
+        period_start = selected_date
+        period_end = period_start + timedelta(days=1)
+    elif period_type == "week":
+        period_start = selected_date - timedelta(days=selected_date.weekday())
+        period_end = period_start + timedelta(days=7)
+    elif period_type == "month":
+        period_start = selected_date.replace(day=1)
+        period_end = (period_start.replace(day=28) + timedelta(days=4)).replace(day=1)
+    else:
+        first_month = ((selected_date.month - 1) // 3) * 3 + 1
+        period_start = selected_date.replace(month=first_month, day=1)
+        end_month = first_month + 3
+        period_end = date(selected_date.year + (end_month - 1) // 12, (end_month - 1) % 12 + 1, 1)
+
+    return {
+        "type": period_type,
+        "date": selected_date,
+        "from": period_start,
+        "to": period_end - timedelta(days=1),
+        "endExclusive": period_end,
+    }
+
+
 @app.get("/api/analytics/kpis")
 @auth_required
 def sales_kpis():
@@ -835,6 +877,88 @@ def sales_kpis():
             "pipelineValue": row["pipelineValue"] or 0,
             "wonValue": row["wonValue"] or 0,
         } for row in deal_rows],
+    })
+
+
+@app.get("/api/analytics/sales-performance")
+@roles_required("Admin", "Manager")
+def sales_performance_report():
+    """Report per-Sale pipeline, closed results and lead conversion for a selected period."""
+    try:
+        period = sales_performance_period()
+    except ValueError as error:
+        return json_error(str(error), 400)
+
+    start = period["from"]
+    end = period["endExclusive"]
+    deal_rows = query(
+        "SELECT u.id AS saleId,u.name AS saleName,d.currency,"
+        "COUNT(CASE WHEN d.created_at >= %s AND d.created_at < %s THEN d.id END) AS dealsCreated,"
+        "COALESCE(SUM(CASE WHEN d.created_at >= %s AND d.created_at < %s "
+        "AND d.stage NOT IN ('WON','LOST') THEN 1 ELSE 0 END),0) AS openDealsCreated,"
+        "COALESCE(SUM(CASE WHEN d.closed_date >= %s AND d.closed_date < %s "
+        "AND d.stage='WON' THEN 1 ELSE 0 END),0) AS wonDealsClosed,"
+        "COALESCE(SUM(CASE WHEN d.closed_date >= %s AND d.closed_date < %s "
+        "AND d.stage='LOST' THEN 1 ELSE 0 END),0) AS lostDealsClosed,"
+        "COALESCE(SUM(CASE WHEN d.closed_date >= %s AND d.closed_date < %s "
+        "AND d.stage='WON' THEN COALESCE(d.closed_amount,d.amount) ELSE 0 END),0) AS wonAmount "
+        "FROM users u LEFT JOIN deals d ON d.owner_user_id=u.id "
+        "WHERE u.role='Sale' GROUP BY u.id,u.name,d.currency ORDER BY u.name,d.currency",
+        (start, end, start, end, start, end, start, end, start, end),
+    )
+    lead_rows = query(
+        "SELECT u.id AS saleId,"
+        "COUNT(CASE WHEN l.created_at >= %s AND l.created_at < %s THEN l.id END) AS leadsCreated,"
+        "COALESCE(SUM(CASE WHEN l.created_at >= %s AND l.created_at < %s "
+        "AND l.status='CONVERTED' THEN 1 ELSE 0 END),0) AS convertedLeads "
+        "FROM users u LEFT JOIN leads l ON l.owner_user_id=u.id AND l.deleted_at IS NULL "
+        "WHERE u.role='Sale' GROUP BY u.id ORDER BY u.id",
+        (start, end, start, end),
+    )
+
+    sales_by_id = {}
+    for row in deal_rows:
+        sale_id = row["saleId"]
+        sale = sales_by_id.setdefault(sale_id, {
+            "saleId": sale_id,
+            "saleName": row["saleName"],
+            "deals": {
+                "created": 0, "openCreated": 0, "wonClosed": 0, "lostClosed": 0,
+            },
+            "leads": {"created": 0, "converted": 0},
+            "revenueByCurrency": [],
+        })
+        sale["deals"]["created"] += int(row["dealsCreated"] or 0)
+        sale["deals"]["openCreated"] += int(row["openDealsCreated"] or 0)
+        sale["deals"]["wonClosed"] += int(row["wonDealsClosed"] or 0)
+        sale["deals"]["lostClosed"] += int(row["lostDealsClosed"] or 0)
+        if row["currency"] is not None:
+            sale["revenueByCurrency"].append({
+                "currency": row["currency"],
+                "wonAmount": row["wonAmount"] or 0,
+            })
+
+    leads_by_id = {row["saleId"]: row for row in lead_rows}
+    for sale_id, sale in sales_by_id.items():
+        lead_row = leads_by_id.get(sale_id, {})
+        sale["leads"] = {
+            "created": int(lead_row.get("leadsCreated") or 0),
+            "converted": int(lead_row.get("convertedLeads") or 0),
+            "conversionRate": analytics_share(
+                int(lead_row.get("convertedLeads") or 0), int(lead_row.get("leadsCreated") or 0)
+            ),
+        }
+        closed_count = sale["deals"]["wonClosed"] + sale["deals"]["lostClosed"]
+        sale["deals"]["winRate"] = analytics_share(sale["deals"]["wonClosed"], closed_count)
+
+    return jsonify({
+        "period": {
+            "type": period["type"],
+            "date": period["date"].isoformat(),
+            "from": period["from"].isoformat(),
+            "to": period["to"].isoformat(),
+        },
+        "sales": list(sales_by_id.values()),
     })
 
 
@@ -3575,7 +3699,24 @@ def customer_account_gemini_summary(account_id):
             custom_instructions=custom_instructions,
         )
         return jsonify({"summary": brief})
-    except Exception:
+    except Exception as error:
+        error_text = str(error).lower()
+        if isinstance(error, GeminiConfigurationError) or "api_key_invalid" in error_text or "api key not valid" in error_text:
+            failure_category = "configuration"
+        elif any(marker in error_text for marker in ("503", "service_unavailable", "service unavailable", "high demand")):
+            failure_category = "provider_unavailable"
+        elif "resource_exhausted" in error_text or "quota" in error_text:
+            failure_category = "quota"
+        elif any(marker in error_text for marker in ("timeout", "timed out", "deadline exceeded")):
+            failure_category = "timeout"
+        elif "404" in error_text or "model not found" in error_text or "unsupported model" in error_text:
+            failure_category = "model_unavailable"
+        else:
+            failure_category = "provider_error"
+        app.logger.warning(
+            "Gemini Copilot unavailable (account_id=%s, category=%s, error_type=%s)",
+            parsed_id, failure_category, type(error).__name__,
+        )
         return json_error(
             "Trợ lý AI tạm thời không khả dụng. Các chức năng CRM khác vẫn hoạt động; vui lòng thử lại sau.",
             503,

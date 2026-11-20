@@ -355,11 +355,13 @@ class GeminiApiEndpointTests(unittest.TestCase):
             [],
             [],
         ]
-        with patch.object(api, "get_user", return_value=user):
+        with patch.object(api, "get_user", return_value=user), self.assertLogs(api.app.logger, level="WARNING") as logs:
             response = self.client.post("/api/customers/accounts/1/gemini-summary")
         self.assertEqual(response.status_code, 503)
         self.assertEqual(response.json["code"], "AI_UNAVAILABLE")
         self.assertNotIn("private provider details", response.get_data(as_text=True))
+        self.assertIn("category=provider_error", "\n".join(logs.output))
+        self.assertNotIn("private provider details", "\n".join(logs.output))
 
     @patch("app.can_access_customer", return_value=True)
     @patch("app.query")
