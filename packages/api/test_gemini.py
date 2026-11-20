@@ -326,7 +326,7 @@ class GeminiApiEndpointTests(unittest.TestCase):
 
     @patch("app.can_access_customer", return_value=True)
     @patch("app.query")
-    def test_gemini_summary_missing_api_key_returns_400(self, mock_query, mock_access):
+    def test_gemini_summary_missing_api_key_returns_503_without_disabling_crm(self, mock_query, mock_access):
         user = self.authenticated_client()
         mock_query.side_effect = [
             [{"id": 1, "name": "Test Account", "industry": "IT", "website": None, "phone": None, "email": None, "billingAddress": None, "ownerUserId": 8, "ownerName": "Test Sale", "createdAt": "2026-01-01"}],
@@ -336,9 +336,49 @@ class GeminiApiEndpointTests(unittest.TestCase):
         ]
         with patch.object(api, "get_user", return_value=user), patch.dict(os.environ, {"GEMINI_API_KEY": ""}):
             response = self.client.post("/api/customers/accounts/1/gemini-summary")
-            self.assertEqual(response.status_code, 400)
+            self.assertEqual(response.status_code, 503)
             data = response.get_json()
-            self.assertEqual(data.get("code"), "GEMINI_NOT_CONFIGURED")
+            self.assertEqual(data.get("code"), "AI_UNAVAILABLE")
+            self.assertIn("CRM khác vẫn hoạt động", data["message"])
+
+    @patch("app.can_access_customer", return_value=True)
+    @patch("app.query")
+    @patch("app.generate_account_copilot_brief", side_effect=RuntimeError("private provider details"))
+    def test_gemini_summary_unexpected_error_returns_safe_503(self, _mock_brief, mock_query, _mock_access):
+        user = self.authenticated_client()
+        mock_query.side_effect = [
+            [{"id": 1, "name": "Test Account", "industry": "IT", "website": None, "phone": None, "email": None, "billingAddress": None, "ownerUserId": 8, "ownerName": "Test Sale", "createdAt": "2026-01-01"}],
+            [],
+            [],
+            [],
+        ]
+        with patch.object(api, "get_user", return_value=user):
+            response = self.client.post("/api/customers/accounts/1/gemini-summary")
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json["code"], "AI_UNAVAILABLE")
+        self.assertNotIn("private provider details", response.get_data(as_text=True))
+
+    @patch("app.can_access_customer", return_value=True)
+    @patch("app.query")
+    @patch("app.generate_activity_smart_summary", side_effect=gemini_service.GeminiServiceError("Gemini timeout"))
+    def test_ai_activity_summary_timeout_returns_503(self, _mock_summary, mock_query, _mock_access):
+        user = self.authenticated_client()
+        mock_query.side_effect = [[{"id": 44}], [{"sensitiveName": "Acme"}], [{"type": "CALL", "subject": "Follow-up", "details": "", "occurredAt": "2026-01-01"}]]
+        with patch.object(api, "get_user", return_value=user):
+            response = self.client.post("/api/ai/summarize", json={"customerId": 44})
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json["code"], "AI_UNAVAILABLE")
+
+    @patch("app.can_access_customer", return_value=True)
+    @patch("app.query")
+    @patch("app.generate_activity_smart_summary", side_effect=gemini_service.GeminiServiceError("Gemini rate limit"))
+    def test_ai_activity_summary_rate_limit_returns_503(self, _mock_summary, mock_query, _mock_access):
+        user = self.authenticated_client()
+        mock_query.side_effect = [[{"id": 44}], [], [{"type": "CALL", "subject": "Follow-up", "details": "", "occurredAt": "2026-01-01"}]]
+        with patch.object(api, "get_user", return_value=user):
+            response = self.client.post("/api/ai/summarize", json={"customerId": 44})
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json["code"], "AI_UNAVAILABLE")
 
     @patch("app.can_access_customer", return_value=True)
     @patch("app.query")
