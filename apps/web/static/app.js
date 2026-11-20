@@ -5,6 +5,10 @@ const state = {
   error: '',
   notice: '',
   users: [],
+  analytics: null,
+  analyticsLoaded: false,
+  analyticsLoadAttempted: false,
+  analyticsLoading: false,
   deals: [],
   dealsLoaded: false,
   quotes: [],
@@ -170,6 +174,11 @@ function appSidebar(active = 'customers') {
       </a>
       <div class="nav-label">WORKSPACE</div>
       <nav class="nav-list">
+        ${state.user?.role !== 'Admin' ? `<a class="nav-item ${active === 'dashboard' ? 'active' : ''}" href="/workspace">
+          <span class="nav-indicator"></span>
+          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="5" rx="1"/><rect x="13" y="10" width="8" height="11" rx="1"/><rect x="3" y="13" width="8" height="8" rx="1"/></svg>
+          <span>Dashboard</span>
+        </a>` : ''}
         ${state.user?.role === 'Admin' ? `<a class="nav-item ${active === 'admin' ? 'active' : ''}" href="/admin/users">
           <span class="nav-indicator"></span>
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
@@ -204,11 +213,6 @@ function appSidebar(active = 'customers') {
           <span class="nav-indicator"></span>
           <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="4" rx="2" ry="2"/><line x1="16" x2="16" y1="2" y2="6"/><line x1="8" x2="8" y1="2" y2="6"/><line x1="3" x2="21" y1="10" y2="10"/></svg>
           <span>Lịch làm việc</span>
-        </a>
-        <a class="nav-item ${active === 'workspace' ? 'active' : ''}" href="/workspace">
-          <span class="nav-indicator"></span>
-          <svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>
-          <span>Tổng quan</span>
         </a>
       </nav>
     </div>
@@ -268,10 +272,26 @@ function resetPage() {
     ${alertBox(state.error)}<button class="primary-button" type="submit" ${token ? '' : 'disabled'}>Cập nhật mật khẩu</button></form>`}</section></main>`;
 }
 function workspacePage() {
-  return `<main class="simple-page"><section class="simple-card workspace-card">${brand}<div class="icon-tile">◈</div>
-    <span class="eyebrow">ĐĂNG NHẬP THÀNH CÔNG</span><h1>Xin chào, ${escapeHtml(state.user?.name)}</h1>
-    <p class="muted">Vai trò: <strong>${escapeHtml(state.user?.role)}</strong>. Trang quản lý người dùng chỉ dành cho Admin.</p>
-     <a class="primary-button full-width" href="/customers">Mở module khách hàng</a><a class="secondary-button full-width" href="/deals">Mở bảng Deal</a><a class="secondary-button full-width" href="/quotes">Mở báo giá</a><button class="secondary-button full-width" data-action="logout">↪ &nbsp; Đăng xuất</button></section></main>`;
+  const analytics = state.analytics;
+  const moneyByCurrency = (key) => (analytics?.revenueByCurrency || []).map((item) =>
+    `<span class="dashboard-money-row"><strong>${escapeHtml(new Intl.NumberFormat('vi-VN', {
+      maximumFractionDigits: 2,
+    }).format(Number(item[key] || 0)))}</strong><small>${escapeHtml(item.currency)}</small></span>`
+  ).join('') || '<span class="dashboard-empty-value">Chưa có dữ liệu</span>';
+  const loading = state.analyticsLoading && !analytics;
+  const unavailable = !analytics && !state.analyticsLoaded;
+  return `<div class="app-shell">${appSidebar('dashboard')}<main class="admin-content dashboard-content">
+    <header class="topbar"><div><span class="eyebrow">SALES PERFORMANCE</span><h1>Dashboard tổng quan</h1><p class="topbar-sub">Xin chào ${escapeHtml(state.user?.name)} · Số liệu theo phạm vi dữ liệu được phân quyền.</p></div>
+      <div class="topbar-actions"><button class="secondary-button compact" data-action="refresh-analytics" ${state.analyticsLoading ? 'disabled' : ''}>${state.analyticsLoading ? 'Đang cập nhật...' : '↻ Làm mới'}</button></div></header>
+    ${alertBox(state.error)}${alertBox(state.notice, 'success')}
+    <section class="kpi-grid dashboard-kpi-grid" aria-label="Chỉ số kinh doanh">
+      <article class="kpi-card"><div class="kpi-info"><span class="kpi-label">Tổng Lead</span><strong class="kpi-value text-blue">${unavailable ? '—' : Number(analytics.leads.total || 0).toLocaleString('vi-VN')}</strong><span class="kpi-hint">Lead trong phạm vi của bạn</span></div><div class="kpi-icon-wrap blue-wrap" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="7" r="4"/><path d="M2 21v-2a7 7 0 0 1 14 0v2M19 8v6m3-3h-6"/></svg></div></article>
+      <article class="kpi-card"><div class="kpi-info"><span class="kpi-label">Tỷ lệ Win</span><strong class="kpi-value text-emerald">${unavailable ? '—' : `${Number(analytics.deals.winRate || 0).toLocaleString('vi-VN')}%`}</strong><span class="kpi-hint">Deal WON / (WON + LOST)</span></div><div class="kpi-icon-wrap emerald-wrap" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 4 4L19 6"/><circle cx="12" cy="12" r="10"/></svg></div></article>
+      <article class="kpi-card dashboard-currency-card"><div class="kpi-info"><span class="kpi-label">Doanh số Won</span>${unavailable ? '<strong class="kpi-value">—</strong>' : moneyByCurrency('wonValue')}<span class="kpi-hint">Giá trị Deal đã chốt thành công</span></div><div class="kpi-icon-wrap indigo-wrap" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20m5-16H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></div></article>
+      <article class="kpi-card dashboard-currency-card"><div class="kpi-info"><span class="kpi-label">Pipeline Value</span>${unavailable ? '<strong class="kpi-value">—</strong>' : moneyByCurrency('pipelineValue')}<span class="kpi-hint">Tổng giá trị Deal đang mở</span></div><div class="kpi-icon-wrap rose-wrap" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18M7 14l4-4 4 4 6-7"/></svg></div></article>
+    </section>
+    ${!loading && !state.analyticsLoading && state.analyticsLoaded && !state.error ? '<p class="dashboard-updated muted small">Số liệu được tải từ Dashboard Analytics.</p>' : ''}
+  </main></div>`;
 }
 
 // Tạo vỏ trang và chỗ mount React; DnD Kit quản lý cột và card bên trong.
@@ -1171,6 +1191,23 @@ async function loadUsers() {
   }
   if (route() === '/admin/users') render();
 }
+async function loadAnalytics(force = false) {
+  if (state.analyticsLoading || (state.analyticsLoaded && !force)
+    || (state.analyticsLoadAttempted && !force)) return;
+  state.analyticsLoading = true;
+  state.analyticsLoadAttempted = true;
+  if (route() === '/workspace') render();
+  try {
+    state.analytics = await api('/analytics/kpis');
+    state.analyticsLoaded = true;
+    state.error = '';
+  } catch (error) {
+    state.error = error.message;
+  } finally {
+    state.analyticsLoading = false;
+    if (route() === '/workspace') render();
+  }
+}
 // Lấy Deal từ API một lần khi mở board, sau đó render lại để đổ card vào cột.
 async function loadDeals() {
   try {
@@ -1375,7 +1412,10 @@ function render() {
   } else if (path === '/calendar') {
     root.innerHTML = calendarPage();
     if (!state.appointmentsLoaded) void loadAppointments();
-  } else if (path === '/workspace') root.innerHTML = workspacePage();
+  } else if (path === '/workspace') {
+    root.innerHTML = workspacePage();
+    if (!state.analyticsLoadAttempted && !state.analyticsLoading) void loadAnalytics();
+  }
   else navigate(state.user?.role === 'Admin' ? '/admin/users' : '/workspace', true);
 }
 root.addEventListener('click', async (event) => {
@@ -1399,6 +1439,10 @@ root.addEventListener('click', async (event) => {
   }
   const id = Number(button.dataset.id);
   switch (button.dataset.action) {
+    case 'refresh-analytics':
+      state.error = '';
+      void loadAnalytics(true);
+      break;
     case 'logout':
       try { await api('/auth/logout', { method: 'POST' }); } catch (error) { console.error(error); }
       state.user = null;
