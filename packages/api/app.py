@@ -39,8 +39,6 @@ API_DIR = Path(__file__).resolve().parent
 if str(API_DIR) not in sys.path:
     sys.path.insert(0, str(API_DIR))
 from gemini_service import (
-    GeminiConfigurationError,
-    GeminiServiceError,
     generate_account_copilot_brief,
     generate_activity_smart_summary,
 )
@@ -3577,12 +3575,12 @@ def customer_account_gemini_summary(account_id):
             custom_instructions=custom_instructions,
         )
         return jsonify({"summary": brief})
-    except GeminiConfigurationError as err:
-        return json_error(str(err), 400, code="GEMINI_NOT_CONFIGURED")
-    except GeminiServiceError as err:
-        return json_error(str(err), 502, code="GEMINI_API_ERROR")
-    except Exception as err:
-        return json_error(f"Không thể phân tích dữ liệu: {str(err)}", 500)
+    except Exception:
+        return json_error(
+            "Trợ lý AI tạm thời không khả dụng. Các chức năng CRM khác vẫn hoạt động; vui lòng thử lại sau.",
+            503,
+            code="AI_UNAVAILABLE",
+        )
 
 
 @app.post("/api/ai/summarize")
@@ -3632,12 +3630,12 @@ def ai_summarize_customer_activities():
     try:
         summary = generate_activity_smart_summary(activities, sensitive_names)
         return jsonify({"summary": summary, "activitiesCount": len(activities)})
-    except GeminiConfigurationError as error:
-        return json_error(str(error), 400, code="GEMINI_NOT_CONFIGURED")
-    except GeminiServiceError as error:
-        return json_error(str(error), 502, code="GEMINI_API_ERROR")
     except Exception:
-        return json_error("Không thể tạo tóm tắt lúc này. Vui lòng thử lại sau.", 502, code="AI_SUMMARY_FAILED")
+        return json_error(
+            "Trợ lý AI tạm thời không khả dụng. Các chức năng CRM khác vẫn hoạt động; vui lòng thử lại sau.",
+            503,
+            code="AI_UNAVAILABLE",
+        )
 
 @app.get("/styles.css")
 def styles():
