@@ -66,9 +66,10 @@ const state = {
   accountName: '',
   detail: null,
   geminiSummary: null,
+  geminiDraft: null,
   interactionSummary: null,
   geminiTaskNotice: '',
-  emailCopied: false,
+  emailCopied: '',
   mailbox: [],
   loginBusy: false,
   deletingUser: null,
@@ -150,9 +151,10 @@ function navigate(path, replace = false) {
   state.notice = '';
   state.detail = null;
   state.geminiSummary = null;
+  state.geminiDraft = null;
   state.interactionSummary = null;
   state.geminiTaskNotice = '';
-  state.emailCopied = false;
+  state.emailCopied = '';
   render();
 }
 const brand = '<div class="brand"><span class="brand-mark">N</span><div class="brand-info"><span>NEXUS<span class="brand-light">CRM</span></span><span class="brand-sub">Enterprise</span></div></div>';
@@ -992,7 +994,8 @@ function geminiCopilotPanel() {
     </div>`;
   }).join('');
 
-  const email = data.email_draft || {};
+  const email = state.geminiDraft?.email || data.email_draft || {};
+  const callScript = state.geminiDraft?.callScript ?? data.call_script ?? '';
 
   return `<section class="gemini-copilot-card">
     <div class="gemini-header">
@@ -1041,20 +1044,31 @@ function geminiCopilotPanel() {
       <div class="gemini-actions-list">${actions}</div>
     </div>` : ''}
 
-    ${email.body ? `<div class="gemini-section email-draft-section">
+    ${email.body || email.subject || email.recipient_name ? `<div class="gemini-section email-draft-section">
       <div class="email-draft-header">
         <h4>GỢI Ý EMAIL CHĂM SÓC KHÁCH HÀNG (CÁ NHÂN HÓA)</h4>
-        <button class="secondary-button compact" data-action="copy-gemini-email">
-          ${state.emailCopied ? '✓ Đã sao chép' : '📋 Sao chép Email'}
+        <button class="secondary-button compact" data-action="copy-gemini-draft" data-draft-type="email">
+          ${state.emailCopied === 'email' ? '✓ Đã sao chép' : '📋 Sao chép Email'}
         </button>
       </div>
       <div class="email-draft-box">
-        <div class="email-draft-meta">
-          <span><strong>Gửi tới:</strong> ${escapeHtml(email.recipient_name || 'Khách hàng')}</span>
-          <span><strong>Tiêu đề:</strong> ${escapeHtml(email.subject || 'Follow-up')}</span>
+        <div class="ai-draft-fields">
+          <label>Người nhận<input type="text" maxlength="160" data-ai-draft="email.recipient_name" value="${escapeHtml(email.recipient_name || '')}" placeholder="Khách hàng"></label>
+          <label>Tiêu đề<input type="text" maxlength="240" data-ai-draft="email.subject" value="${escapeHtml(email.subject || '')}" placeholder="Nhập tiêu đề email"></label>
+          <label>Nội dung email<textarea rows="8" maxlength="10000" data-ai-draft="email.body" placeholder="Chỉnh sửa nội dung email trước khi sử dụng">${escapeHtml(email.body || '')}</textarea></label>
         </div>
-        <pre class="email-draft-content">${escapeHtml(email.body)}</pre>
       </div>
+      <p class="ai-draft-note">Bản nháp chỉ được dùng sau khi bạn kiểm tra. Nexus CRM không tự gửi email.</p>
+    </div>` : ''}
+    ${callScript ? `<div class="gemini-section email-draft-section call-script-section">
+      <div class="email-draft-header">
+        <h4>KỊCH BẢN GỌI ĐIỆN TƯ VẤN</h4>
+        <button class="secondary-button compact" data-action="copy-gemini-draft" data-draft-type="callScript">
+          ${state.emailCopied === 'callScript' ? '✓ Đã sao chép' : '📋 Sao chép kịch bản'}
+        </button>
+      </div>
+      <label class="ai-draft-field">Nội dung kịch bản<textarea rows="10" maxlength="10000" data-ai-draft="callScript" placeholder="Chỉnh sửa kịch bản trước khi sử dụng">${escapeHtml(callScript)}</textarea></label>
+      <p class="ai-draft-note">Hãy xem lại và điều chỉnh kịch bản phù hợp với cuộc gọi. AI không tự thực hiện cuộc gọi.</p>
     </div>` : ''}
   </section>`;
 }
@@ -1134,9 +1148,10 @@ async function loadDealCreateOptions() {
 }
 async function loadDetail(id) {
   state.geminiSummary = null;
+  state.geminiDraft = null;
   state.interactionSummary = null;
   state.geminiTaskNotice = '';
-  state.emailCopied = false;
+  state.emailCopied = '';
   try {
     state.detail = await api(`/customers/accounts/${encodeURIComponent(id)}`);
     state.error = '';
@@ -1586,12 +1601,17 @@ root.addEventListener('click', async (event) => {
       const accountId = state.detail?.account?.id;
       if (!accountId) break;
       state.geminiSummary = { loading: true, data: null, error: '', missingConfig: false };
+      state.geminiDraft = null;
       state.geminiTaskNotice = '';
-      state.emailCopied = false;
+      state.emailCopied = '';
       render();
       try {
         const res = await api(`/customers/accounts/${encodeURIComponent(accountId)}/gemini-summary`, { method: 'POST' });
         state.geminiSummary = { loading: false, data: res.summary, error: '', missingConfig: false };
+        state.geminiDraft = {
+          email: { ...(res.summary?.email_draft || {}) },
+          callScript: res.summary?.call_script || '',
+        };
       } catch (err) {
         const isMissingKey = err.message && (err.message.includes('GEMINI_API_KEY') || err.message.includes('Chưa cấu hình'));
         state.geminiSummary = { loading: false, data: null, error: err.message, missingConfig: Boolean(isMissingKey) };
@@ -1645,16 +1665,19 @@ root.addEventListener('click', async (event) => {
       render();
       break;
     }
-    case 'copy-gemini-email': {
-      const email = state.geminiSummary?.data?.email_draft;
-      if (!email) break;
-      const fullText = `Tiêu đề: ${email.subject || ''}\n\n${email.body || ''}`;
+    case 'copy-gemini-draft': {
+      const type = button.dataset.draftType;
+      const email = state.geminiDraft?.email;
+      const fullText = type === 'email' && email
+        ? `Gửi tới: ${email.recipient_name || ''}\nTiêu đề: ${email.subject || ''}\n\n${email.body || ''}`
+        : type === 'callScript' ? state.geminiDraft?.callScript : '';
+      if (!fullText) break;
       try {
         await navigator.clipboard.writeText(fullText);
-        state.emailCopied = true;
+        state.emailCopied = type;
         render();
         setTimeout(() => {
-          state.emailCopied = false;
+          if (state.emailCopied === type) state.emailCopied = '';
           if (route().startsWith('/customers/accounts/')) render();
         }, 3000);
       } catch (err) {
@@ -1666,7 +1689,15 @@ root.addEventListener('click', async (event) => {
 });
 root.addEventListener('input', (event) => {
   const input = event.target;
-  if (input.closest('form[data-form="product"]') && input.name) {
+  if (input.dataset.aiDraft && state.geminiDraft) {
+    const [section, field] = input.dataset.aiDraft.split('.');
+    if (section === 'email' && field && state.geminiDraft.email) {
+      state.geminiDraft.email[field] = input.value;
+    } else if (section === 'callScript') {
+      state.geminiDraft.callScript = input.value;
+    }
+    state.emailCopied = '';
+  } else if (input.closest('form[data-form="product"]') && input.name) {
     state.productDraft[input.name] = input.type === 'checkbox' ? input.checked : input.value;
   } else if (input.dataset.quoteField) {
     const line = input.closest('.quote-line');

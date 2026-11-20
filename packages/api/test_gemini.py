@@ -198,6 +198,7 @@ class GeminiServiceUnitTests(unittest.TestCase):
                 "subject": "Follow-up buổi demo giải pháp Nexus CRM",
                 "body": "Chào anh Bình,\nCảm ơn anh đã tham gia buổi demo hôm qua...",
             },
+            "call_script": "Chào anh Bình, em gọi để trao đổi thêm về buổi demo...",
         }
 
         mock_interaction = MagicMock()
@@ -214,6 +215,8 @@ class GeminiServiceUnitTests(unittest.TestCase):
             self.assertEqual(res["relationship_health"]["score"], 85)
             self.assertEqual(res["model"], "gemini-4-hydrogen")
             self.assertEqual(len(res["recommended_actions"]), 1)
+            self.assertIn("call_script", res)
+            self.assertIn("buổi demo", res["call_script"])
 
 
 class GeminiApiEndpointTests(unittest.TestCase):
@@ -399,6 +402,7 @@ class GeminiApiEndpointTests(unittest.TestCase):
             "opportunities": [],
             "recommended_actions": [],
             "email_draft": {"recipient_name": "A", "subject": "B", "body": "C"},
+            "call_script": "Kịch bản gọi khách hàng",
         }
 
         with patch.object(api, "get_user", return_value=user):

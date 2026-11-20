@@ -146,6 +146,7 @@ ACCOUNT_BRIEF_SCHEMA: Dict[str, Any] = {
             },
             "required": ["recipient_name", "subject", "body"],
         },
+        "call_script": {"type": "string"},
     },
     "required": [
         "relationship_health",
@@ -155,6 +156,7 @@ ACCOUNT_BRIEF_SCHEMA: Dict[str, Any] = {
         "opportunities",
         "recommended_actions",
         "email_draft",
+        "call_script",
     ],
 }
 
@@ -382,6 +384,9 @@ NHIỆM VỤ CỦA BẠN:
    - recipient_name: Tên người nhận (chọn liên hệ phù hợp nhất từ danh sách Contacts, nếu chưa có thì để 'Quý đối tác').
    - subject: Tiêu đề email chuyên nghiệp, thu hút.
    - body: Nội dung email tiếng Việt tự nhiên, ấm áp, thể hiện sự am hiểu về khách hàng và đưa ra lời kêu gọi hành động (CTA) rõ ràng.
+8. Kịch bản gọi điện tư vấn (call_script):
+   - Viết kịch bản tiếng Việt có lời mở đầu, một vài câu hỏi/gợi ý trao đổi phù hợp với nhu cầu và giai đoạn Deal, cùng lời kết và bước tiếp theo.
+   - Nội dung phải là văn bản thuần để người dùng có thể đọc, chỉnh sửa và sao chép trước khi gọi.
 
 Trả về kết quả bằng định dạng JSON tuân thủ schema được cung cấp. Tất cả nội dung văn bản phải bằng tiếng Việt chuẩn mực.
 """
