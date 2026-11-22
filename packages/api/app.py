@@ -364,6 +364,15 @@ def deal_scope(user, column="owner_user_id"):
     return f"{column} = %s", [user["id"]]
 
 
+def analytics_owner_scope(user, column="owner_user_id"):
+    """Limit dashboard data to the signed-in Sale or the Manager's Sales team."""
+    if user["role"] == "Admin":
+        return "", []
+    if user["role"] == "Manager":
+        return f"{column} IN (SELECT id FROM users WHERE role='Sale')", []
+    return f"{column} = %s", [user["id"]]
+
+
 def deal_payload(data, partial=False):
     allowed = {
         "accountId", "contactId", "ownerUserId", "name", "amount", "currency",
@@ -835,7 +844,7 @@ def sales_kpis():
         tuple(deal_values + deal_dates),
     )
 
-    lead_scope_sql, lead_values = ownership(g.user, "l.owner_user_id")
+    lead_scope_sql, lead_values = analytics_owner_scope(g.user, "l.owner_user_id")
     lead_filters, lead_dates = analytics_created_filter("l", period)
     lead_filters.insert(0, "l.deleted_at IS NULL")
     if lead_scope_sql:
@@ -983,7 +992,7 @@ def sales_funnel():
         tuple(deal_values + deal_dates),
     )
 
-    lead_scope_sql, lead_values = ownership(g.user, "l.owner_user_id")
+    lead_scope_sql, lead_values = analytics_owner_scope(g.user, "l.owner_user_id")
     lead_filters, lead_dates = analytics_created_filter("l", period)
     lead_filters.insert(0, "l.deleted_at IS NULL")
     if lead_scope_sql:
