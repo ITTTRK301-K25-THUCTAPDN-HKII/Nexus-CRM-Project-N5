@@ -6,6 +6,7 @@ const state = {
   notice: '',
   users: [],
   analytics: null,
+  analyticsRange: 'month',
   analyticsLoaded: false,
   analyticsLoadAttempted: false,
   analyticsLoading: false,
@@ -271,6 +272,23 @@ function resetPage() {
     <label for="confirmation">Xác nhận mật khẩu</label><div class="input-wrap">▣ <input id="confirmation" name="confirmation" type="password" autocomplete="new-password" minlength="8" maxlength="128" required ${token ? '' : 'disabled'}></div>
     ${alertBox(state.error)}<button class="primary-button" type="submit" ${token ? '' : 'disabled'}>Cập nhật mật khẩu</button></form>`}</section></main>`;
 }
+function dashboardPeriodRange(range = 'month', now = new Date()) {
+  let start;
+  let end;
+  if (range === 'quarter') {
+    const firstMonth = Math.floor(now.getMonth() / 3) * 3;
+    start = new Date(now.getFullYear(), firstMonth, 1);
+    end = new Date(now.getFullYear(), firstMonth + 3, 0);
+  } else if (range === 'year') {
+    start = new Date(now.getFullYear(), 0, 1);
+    end = new Date(now.getFullYear(), 11, 31);
+  } else {
+    start = new Date(now.getFullYear(), now.getMonth(), 1);
+    end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+  }
+  const toDateKey = (value) => `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
+  return { from: toDateKey(start), to: toDateKey(end) };
+}
 function workspacePage() {
   const analytics = state.analytics;
   const moneyByCurrency = (key) => (analytics?.revenueByCurrency || []).map((item) =>
@@ -280,9 +298,14 @@ function workspacePage() {
   ).join('') || '<span class="dashboard-empty-value">Chưa có dữ liệu</span>';
   const loading = state.analyticsLoading && !analytics;
   const unavailable = !analytics && !state.analyticsLoaded;
+  const rangeLabel = { month: 'Tháng này', quarter: 'Quý này', year: 'Năm nay' }[state.analyticsRange] || 'Tháng này';
   return `<div class="app-shell">${appSidebar('dashboard')}<main class="admin-content dashboard-content">
     <header class="topbar"><div><span class="eyebrow">SALES PERFORMANCE</span><h1>Dashboard tổng quan</h1><p class="topbar-sub">Xin chào ${escapeHtml(state.user?.name)} · Số liệu theo phạm vi dữ liệu được phân quyền.</p></div>
-      <div class="topbar-actions"><button class="secondary-button compact" data-action="refresh-analytics" ${state.analyticsLoading ? 'disabled' : ''}>${state.analyticsLoading ? 'Đang cập nhật...' : '↻ Làm mới'}</button></div></header>
+      <div class="topbar-actions dashboard-actions"><label class="dashboard-range-filter" for="dashboard-range"><span>Khoảng thời gian</span><select id="dashboard-range" data-input="analytics-range" ${state.analyticsLoading ? 'disabled' : ''}>
+        <option value="month" ${state.analyticsRange === 'month' ? 'selected' : ''}>Tháng này</option>
+        <option value="quarter" ${state.analyticsRange === 'quarter' ? 'selected' : ''}>Quý này</option>
+        <option value="year" ${state.analyticsRange === 'year' ? 'selected' : ''}>Năm nay</option>
+      </select></label><button class="secondary-button compact" data-action="refresh-analytics" ${state.analyticsLoading ? 'disabled' : ''}>${state.analyticsLoading ? 'Đang cập nhật...' : '↻ Làm mới'}</button></div></header>
     ${alertBox(state.error)}${alertBox(state.notice, 'success')}
     <section class="kpi-grid dashboard-kpi-grid" aria-label="Chỉ số kinh doanh">
       <article class="kpi-card"><div class="kpi-info"><span class="kpi-label">Tổng Lead</span><strong class="kpi-value text-blue">${unavailable ? '—' : Number(analytics.leads.total || 0).toLocaleString('vi-VN')}</strong><span class="kpi-hint">Lead trong phạm vi của bạn</span></div><div class="kpi-icon-wrap blue-wrap" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="9" cy="7" r="4"/><path d="M2 21v-2a7 7 0 0 1 14 0v2M19 8v6m3-3h-6"/></svg></div></article>
@@ -290,7 +313,7 @@ function workspacePage() {
       <article class="kpi-card dashboard-currency-card"><div class="kpi-info"><span class="kpi-label">Doanh số Won</span>${unavailable ? '<strong class="kpi-value">—</strong>' : moneyByCurrency('wonValue')}<span class="kpi-hint">Giá trị Deal đã chốt thành công</span></div><div class="kpi-icon-wrap indigo-wrap" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20m5-16H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></div></article>
       <article class="kpi-card dashboard-currency-card"><div class="kpi-info"><span class="kpi-label">Pipeline Value</span>${unavailable ? '<strong class="kpi-value">—</strong>' : moneyByCurrency('pipelineValue')}<span class="kpi-hint">Tổng giá trị Deal đang mở</span></div><div class="kpi-icon-wrap rose-wrap" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18M7 14l4-4 4 4 6-7"/></svg></div></article>
     </section>
-    ${!loading && !state.analyticsLoading && state.analyticsLoaded && !state.error ? '<p class="dashboard-updated muted small">Số liệu được tải từ Dashboard Analytics.</p>' : ''}
+    ${!loading && !state.analyticsLoading && state.analyticsLoaded && !state.error ? `<p class="dashboard-updated muted small">${rangeLabel} · ${escapeHtml(analytics.period?.from || '')} – ${escapeHtml(analytics.period?.to || '')}</p>` : ''}
   </main></div>`;
 }
 
@@ -1198,7 +1221,8 @@ async function loadAnalytics(force = false) {
   state.analyticsLoadAttempted = true;
   if (route() === '/workspace') render();
   try {
-    state.analytics = await api('/analytics/kpis');
+    const period = dashboardPeriodRange(state.analyticsRange);
+    state.analytics = await api(`/analytics/kpis?from=${period.from}&to=${period.to}`);
     state.analyticsLoaded = true;
     state.error = '';
   } catch (error) {
@@ -1797,6 +1821,15 @@ root.addEventListener('change', async (event) => {
     customerRequest = '';
     customerLoadedKey = '';
     render();
+  } else if (input.dataset.input === 'analytics-range') {
+    if (!['month', 'quarter', 'year'].includes(input.value) || state.analyticsLoading) return;
+    state.analyticsRange = input.value;
+    state.analytics = null;
+    state.analyticsLoaded = false;
+    state.analyticsLoadAttempted = false;
+    state.error = '';
+    render();
+    void loadAnalytics(true);
   } else if (input.dataset.input === 'deal-owner') {
     state.dealOwnerSelected = input.value;
     render();

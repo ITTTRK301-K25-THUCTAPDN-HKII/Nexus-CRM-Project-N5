@@ -80,6 +80,30 @@ class SalesAnalyticsApiTests(unittest.TestCase):
             (date(2026, 1, 1), date(2026, 2, 1), sale["id"]),
         )
 
+    def test_manager_dashboard_includes_sales_team_leads_and_deals(self):
+        manager = self.authenticate(role="Manager", user_id=3)
+        team_scope = "IN (SELECT id FROM users WHERE role='Sale')"
+        for endpoint, rows in (
+            ("/api/analytics/kpis", [[], [{"totalLeads": 4, "convertedLeads": 1}]]),
+            ("/api/analytics/funnel", [[], [{"status": "NEW", "leadCount": 4}]]),
+        ):
+            with self.subTest(endpoint=endpoint), patch.object(
+                api, "get_user", return_value=manager
+            ), patch.object(api, "query", side_effect=rows) as query:
+                response = self.client.get(f"{endpoint}?from=2026-03-01&to=2026-03-31")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertIn(team_scope, query.call_args_list[0].args[0])
+            self.assertIn(team_scope, query.call_args_list[1].args[0])
+            self.assertEqual(
+                query.call_args_list[0].args[1],
+                (date(2026, 3, 1), date(2026, 4, 1)),
+            )
+            self.assertEqual(
+                query.call_args_list[1].args[1],
+                (date(2026, 3, 1), date(2026, 4, 1)),
+            )
+
     def test_funnel_returns_all_lead_and_deal_stages_with_rates(self):
         sale = self.authenticate()
         deal_rows = [
