@@ -47,6 +47,12 @@ Node.js and npm are not required to run this version of the project. The Deal bo
 10. For an existing database created before quote versioning, run
     `packages/api/sql/migrations/010_quote_versioning.sql` once after migrations
     008 and 009. New databases already include quote version fields.
+11. For an existing database, apply
+    `packages/api/sql/migrations/011_customer_deal_task_indexes.sql` once to add
+    the customer ownership/phone, active Lead filter, Deal owner/stage, and Task
+    assignee/due-date indexes. New databases receive these indexes from
+    `schema.mysql.sql`. Lead phone, Lead status, Deal stage, and Task reminder
+    indexes already exist and are not duplicated.
 
 ## 2. Configure the database connection
 

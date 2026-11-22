@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS accounts (
   PRIMARY KEY (id),
   KEY idx_accounts_owner (owner_user_id),
   KEY idx_accounts_name (name),
+  KEY idx_accounts_owner_phone (owner_user_id,phone),
   CONSTRAINT fk_accounts_owner FOREIGN KEY (owner_user_id) REFERENCES users(id)
     ON UPDATE CASCADE ON DELETE RESTRICT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
@@ -89,6 +90,7 @@ CREATE TABLE IF NOT EXISTS leads (
   KEY idx_leads_name (name),
   KEY idx_leads_source (source),
   KEY idx_leads_active_created (deleted_at, created_at),
+  KEY idx_leads_owner_active_status (owner_user_id,deleted_at,status),
   KEY idx_leads_converted_account (converted_account_id),
   CONSTRAINT fk_leads_owner FOREIGN KEY (owner_user_id) REFERENCES users(id)
     ON UPDATE CASCADE ON DELETE RESTRICT,
@@ -111,6 +113,7 @@ CREATE TABLE IF NOT EXISTS contacts (
   KEY idx_contacts_account (account_id),
   KEY idx_contacts_owner (owner_user_id),
   KEY idx_contacts_email (email),
+  KEY idx_contacts_owner_phone (owner_user_id,phone),
   CONSTRAINT fk_contacts_account FOREIGN KEY (account_id) REFERENCES accounts(id)
     ON UPDATE CASCADE ON DELETE CASCADE,
   CONSTRAINT fk_contacts_owner FOREIGN KEY (owner_user_id) REFERENCES users(id)
@@ -139,6 +142,7 @@ CREATE TABLE IF NOT EXISTS deals (
   KEY idx_deals_contact (contact_id),
   KEY idx_deals_owner (owner_user_id),
   KEY idx_deals_stage (stage),
+  KEY idx_deals_owner_stage (owner_user_id,stage),
   CONSTRAINT chk_deals_probability CHECK (probability <= 100),
   CONSTRAINT chk_deals_amount CHECK (amount >= 0),
   CONSTRAINT fk_deals_account FOREIGN KEY (account_id) REFERENCES accounts(id)
@@ -291,6 +295,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (id),
   KEY idx_tasks_assignee_status (assigned_to_user_id, status),
+  KEY idx_tasks_assignee_due (assigned_to_user_id,due_at),
   KEY idx_tasks_telegram_due (status, due_at, telegram_notified_at),
   KEY idx_tasks_creator (created_by_user_id),
   KEY idx_tasks_lead (lead_id),
