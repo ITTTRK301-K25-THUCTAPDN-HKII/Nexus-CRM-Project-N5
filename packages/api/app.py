@@ -76,22 +76,32 @@ app.json = APIJSONProvider(app)
 
 _task_notification_stop = threading.Event()
 _task_notification_thread = None
+_db_pool = None
+_db_pool_lock = threading.Lock()
 
 _rate_lock = threading.Lock()
 _rate_events: dict[str, list[float]] = {}
 
 
 def db_connect():
-    return mysql.connector.connect(
-        host=os.getenv("DB_HOST", "127.0.0.1"),
-        port=int(os.getenv("DB_PORT", "3306")),
-        user=os.getenv("DB_USER", "root"),
-        password=os.getenv("DB_PASSWORD", ""),
-        database=os.getenv("DB_NAME", "nexus_crm"),
-        autocommit=False,
-        charset="utf8mb4",
-        collation="utf8mb4_0900_ai_ci",
-    )
+    global _db_pool
+    if _db_pool is None:
+        with _db_pool_lock:
+            if _db_pool is None:
+                _db_pool = mysql.connector.pooling.MySQLConnectionPool(
+                    pool_name="nexus_crm_pool",
+                    pool_size=10,
+                    pool_reset_session=True,
+                    host=os.getenv("DB_HOST", "127.0.0.1"),
+                    port=int(os.getenv("DB_PORT", "3306")),
+                    user=os.getenv("DB_USER", "root"),
+                    password=os.getenv("DB_PASSWORD", ""),
+                    database=os.getenv("DB_NAME", "nexus_crm"),
+                    autocommit=False,
+                    charset="utf8mb4",
+                    collation="utf8mb4_0900_ai_ci",
+                )
+    return _db_pool.get_connection()
 
 
 def query(sql, values=()):
@@ -3814,6 +3824,15 @@ def request_too_large(_error):
 
 @app.after_request
 def security_headers(response):
+    if request.path.startswith("/api/") and hasattr(g, "request_started_at"):
+        elapsed_ms = (time.perf_counter() - g.request_started_at) * 1000
+        response.headers["X-Response-Time-ms"] = f"{elapsed_ms:.2f}"
+        response.headers["Server-Timing"] = f"app;dur={elapsed_ms:.2f}"
+        if elapsed_ms > 500:
+            app.logger.warning(
+                "Slow API request: %s %s returned %s in %.2fms",
+                request.method, request.path, response.status_code, elapsed_ms,
+            )
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "no-referrer")
@@ -3822,6 +3841,12 @@ def security_headers(response):
         "default-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
     )
     return response
+
+
+@app.before_request
+def start_request_timer():
+    if request.path.startswith("/api/"):
+        g.request_started_at = time.perf_counter()
 
 @app.errorhandler(404)
 def not_found(_error):

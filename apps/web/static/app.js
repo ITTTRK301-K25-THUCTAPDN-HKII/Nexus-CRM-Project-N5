@@ -132,7 +132,7 @@ function loadDealBoardBundle() {
       const script = document.createElement('script');
       // Version the lazy bundle URL so browsers do not reuse an older cached build
       // that may not expose window.mountDealBoard.
-      script.src = '/static/deal-board.js?v=deal-cards-dnd-20261116';
+      script.src = '/static/deal-board.js?v=deal-board-perf-20261122';
       script.async = true;
       script.onload = resolve;
       script.onerror = () => {

@@ -46,7 +46,21 @@ class FlaskAppTests(unittest.TestCase):
         health = self.client.get("/api/health")
         self.assertEqual(health.json, {"status": "ok"})
         self.assertEqual(health.headers["X-Content-Type-Options"], "nosniff")
+        self.assertGreaterEqual(float(health.headers["X-Response-Time-ms"]), 0)
+        self.assertIn("app;dur=", health.headers["Server-Timing"])
         self.assertEqual(self.client.get("/api/missing").status_code, 404)
+
+    def test_database_connections_are_reused_from_a_bounded_pool(self):
+        previous_pool = api._db_pool
+        api._db_pool = None
+        self.addCleanup(setattr, api, "_db_pool", previous_pool)
+        with patch.object(api.mysql.connector.pooling, "MySQLConnectionPool") as pool_factory:
+            connection = api.db_connect()
+
+        pool_factory.assert_called_once()
+        self.assertEqual(pool_factory.call_args.kwargs["pool_size"], 10)
+        pool_factory.return_value.get_connection.assert_called_once_with()
+        self.assertIs(connection, pool_factory.return_value.get_connection.return_value)
 
     def test_login_issues_http_only_scoped_cookies_and_authenticates(self):
         password = "Password123!"

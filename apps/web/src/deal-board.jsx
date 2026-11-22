@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { DndContext, KeyboardSensor, MouseSensor, TouchSensor, useDraggable, useDroppable, useSensor, useSensors } from '@dnd-kit/core';
 
@@ -52,6 +52,14 @@ function DealBoard({ deals: initialDeals, onStageChange, onHistory, onDelete }) 
   const [pendingDelete, setPendingDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
   const historyRequest = useRef(0);
+  const dealsByStage = useMemo(() => {
+    const grouped = Object.fromEntries(COLUMNS.map((column) => [column.id, []]));
+    deals.forEach((deal) => {
+      const stage = getBoardStage(deal.stage);
+      if (grouped[stage]) grouped[stage].push(deal);
+    });
+    return grouped;
+  }, [deals]);
   const sensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: 150, tolerance: 6 } }),
@@ -228,7 +236,7 @@ function DealBoard({ deals: initialDeals, onStageChange, onHistory, onDelete }) 
     <p className="deal-board-guidance"><span aria-hidden="true">↔</span> Kéo thẻ Deal sang cột khác theo cả hai chiều để đổi hoặc mở lại trạng thái. Thành công/Thất bại cần thông tin xác nhận.</p>
     <div className="deal-board" aria-label="Bảng Deal gồm năm trạng thái">
       {COLUMNS.map((column) => {
-        const columnDeals = deals.filter((deal) => getBoardStage(deal.stage) === column.id);
+        const columnDeals = dealsByStage[column.id];
         return <DealColumn key={column.id} column={column} deals={columnDeals}>
           {columnDeals.map((deal) => <DraggableDeal key={deal.id} deal={deal}>
             <article className="deal-card">
