@@ -1,0 +1,54 @@
+services:
+  db:
+    image: mysql:8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: nexus_crm
+      MYSQL_USER: ${DEPLOY_DB_USER:-nexus_app}
+      MYSQL_PASSWORD: ${DEPLOY_DB_PASSWORD:?Set DEPLOY_DB_PASSWORD in .env}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?Set MYSQL_ROOT_PASSWORD in .env}
+    volumes:
+      - nexus_mysql_data:/var/lib/mysql
+      - ./packages/api/sql/schema.mysql.sql:/docker-entrypoint-initdb.d/001-schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping --host=127.0.0.1 --user=root --password=\"$${MYSQL_ROOT_PASSWORD}\" --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: "3001"
+      DB_HOST: db
+      DB_PORT: "3306"
+      DB_USER: ${DEPLOY_DB_USER:-nexus_app}
+      DB_PASSWORD: ${DEPLOY_DB_PASSWORD:?Set DEPLOY_DB_PASSWORD in .env}
+      DB_NAME: nexus_crm
+      JWT_SECRET: ${DEPLOY_JWT_SECRET:?Set DEPLOY_JWT_SECRET in .env}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.8-flash}
+    ports:
+      - "127.0.0.1:3001:3001"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "from urllib.request import urlopen; urlopen('http://127.0.0.1:3001/api/health', timeout=3)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  nexus_mysql_data:

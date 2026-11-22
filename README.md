@@ -146,6 +146,27 @@ already exist:
 Password reset links are written to the development mailbox table. Real email
 delivery is not configured.
 
+## Container deployment
+
+Docker Compose can run the app with MySQL 8.0. Copy `.env.example` to `.env`,
+then set `DEPLOY_DB_PASSWORD`, `MYSQL_ROOT_PASSWORD`, and a unique
+`DEPLOY_JWT_SECRET` of at least 32 characters before starting the stack. The
+containerized app runs in production mode as a non-root user behind Waitress;
+the database is only reachable on the Compose network, and its data persists in
+the `nexus_mysql_data` volume.
+
+```powershell
+docker compose up --build -d
+docker compose logs -f api
+```
+
+Open <http://127.0.0.1:3001>. On the first start, MySQL loads
+`schema.mysql.sql` into the new database volume. Existing databases are not
+automatically migrated; apply any required SQL migrations manually before
+deploying. To stop the app while preserving database data, run
+`docker compose down`. To intentionally remove the database volume as well,
+run `docker compose down --volumes`.
+
 ## Rebuild the Deal board after changing its React source
 
 From the repository root, run these commands after editing `apps/web/src/deal-board.jsx`:
@@ -167,5 +188,12 @@ Run the Python unit tests from the repository root:
 .\.venv\Scripts\python.exe -m unittest discover -s packages\api -p "test_*.py"
 ```
 
-These tests use mocks for database-backed behavior and do not clear application
-data.
+Or run the automated test and frontend syntax checks using PowerShell:
+
+```powershell
+.\scripts\run_tests.ps1
+```
+
+The suite includes unit tests and Flask API integration tests; database-backed
+tests use mocks and do not clear application data. GitHub Actions runs the same
+suite on pushes and pull requests.
