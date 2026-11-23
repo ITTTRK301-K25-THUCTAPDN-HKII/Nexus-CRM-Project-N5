@@ -899,6 +899,46 @@ def sales_kpis():
     })
 
 
+@app.get("/api/analytics/revenue-by-month")
+@auth_required
+def monthly_revenue_report():
+    """Return closed-won revenue grouped by month without combining currencies."""
+    try:
+        period = analytics_period()
+    except ValueError as error:
+        return json_error(str(error), 400)
+
+    filters = ["d.stage='WON'", "d.closed_date IS NOT NULL"]
+    values = []
+    if period["from"]:
+        filters.append("d.closed_date >= %s")
+        values.append(period["from"])
+    if period["to"]:
+        filters.append("d.closed_date < %s")
+        values.append(period["to"] + timedelta(days=1))
+    scope_sql, scope_values = deal_scope(g.user, "d.owner_user_id")
+    if scope_sql:
+        filters.append(scope_sql)
+        values.extend(scope_values)
+
+    rows = query(
+        "SELECT DATE_FORMAT(d.closed_date,'%%Y-%%m') AS month,d.currency,"
+        "COALESCE(SUM(COALESCE(d.closed_amount,d.amount)),0) AS actual "
+        "FROM deals d WHERE " + " AND ".join(filters) +
+        " GROUP BY DATE_FORMAT(d.closed_date,'%%Y-%%m'),d.currency ORDER BY month,d.currency",
+        tuple(values),
+    )
+    return jsonify({
+        "period": {
+            "from": period["from"].isoformat() if period["from"] else None,
+            "to": period["to"].isoformat() if period["to"] else None,
+        },
+        "monthlyRevenue": [{
+            "month": row["month"], "currency": row["currency"], "actual": row["actual"] or 0,
+        } for row in rows],
+    })
+
+
 @app.get("/api/analytics/sales-performance")
 @roles_required("Admin", "Manager")
 def sales_performance_report():

@@ -7,6 +7,7 @@ const state = {
   users: [],
   analytics: null,
   analyticsFunnel: null,
+  analyticsRevenue: null,
   analyticsRange: 'month',
   analyticsLoaded: false,
   analyticsLoadAttempted: false,
@@ -326,6 +327,48 @@ function funnelChartMarkup({ title, description, stages, excludedStages = [] }) 
   return `<article class="funnel-card"><header class="funnel-card-heading"><div><h3>${escapeHtml(title)}</h3><p>${escapeHtml(description)}</p></div><span class="funnel-bottleneck">${bottleneck}</span></header>
     ${maxCount ? `<div class="funnel-chart" role="list" aria-label="${escapeHtml(title)}">${stagesMarkup}</div>${excludedMarkup}` : '<div class="funnel-empty">Chưa có dữ liệu trong khoảng thời gian này.</div>'}</article>`;
 }
+function revenueTargetStorageKey() {
+  return `nexus-crm-revenue-targets-${state.user?.id || 'guest'}`;
+}
+function readRevenueTargets() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(revenueTargetStorageKey()) || '{}');
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+function revenueChartMarkup(currency, monthKeys, actualByMonth) {
+  const targets = readRevenueTargets();
+  const targetValues = monthKeys.map((month) => {
+    const key = `${currency}:${month}`;
+    const amount = Number(targets[key] || 0);
+    return Number.isFinite(amount) && amount > 0 ? amount : 0;
+  });
+  const actualValues = monthKeys.map((month) => Number(actualByMonth.get(month) || 0));
+  const scaleMax = Math.max(0, ...targetValues, ...actualValues);
+  const formatMoney = (value) => new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 2 }).format(value);
+  const bars = monthKeys.map((month, index) => {
+    const actual = actualValues[index];
+    const target = targetValues[index];
+    const actualHeight = scaleMax ? actual / scaleMax * 100 : 0;
+    const targetHeight = scaleMax ? target / scaleMax * 100 : 0;
+    return `<div class="revenue-month-column" role="group" aria-label="${escapeHtml(month)}">
+      <div class="revenue-bars" aria-label="${escapeHtml(month)}: thực tế ${escapeHtml(formatMoney(actual))} ${escapeHtml(currency)}, chỉ tiêu ${escapeHtml(formatMoney(target))} ${escapeHtml(currency)}">
+        <span class="revenue-bar revenue-bar-actual" style="height:${actualHeight}%" title="Thực tế: ${escapeHtml(formatMoney(actual))} ${escapeHtml(currency)}"></span>
+        <span class="revenue-bar revenue-bar-target" style="height:${targetHeight}%" title="Chỉ tiêu: ${escapeHtml(formatMoney(target))} ${escapeHtml(currency)}"></span>
+      </div><span class="revenue-month-label">${escapeHtml(month.slice(5))}/${escapeHtml(month.slice(0, 4))}</span></div>`;
+  }).join('');
+  const targetInputs = monthKeys.map((month, index) => `<label class="revenue-target-input"><span>${escapeHtml(month.slice(5))}/${escapeHtml(month.slice(0, 4))}</span>
+    <input type="number" min="0" step="any" inputmode="decimal" value="${targetValues[index] || ''}" placeholder="Nhập chỉ tiêu" data-input="revenue-target" data-month="${escapeHtml(month)}" data-currency="${escapeHtml(currency)}">
+  </label>`).join('');
+  return `<article class="funnel-card revenue-card"><header class="funnel-card-heading"><div><h3>Doanh thu thực tế vs chỉ tiêu · ${escapeHtml(currency)}</h3>
+    <p>Doanh thu Deal WON theo ngày chốt. Nhập chỉ tiêu theo từng tháng; chỉ tiêu được lưu trên trình duyệt này.</p></div>
+    <div class="revenue-legend"><span><i class="revenue-legend-actual"></i>Thực tế</span><span><i class="revenue-legend-target"></i>Chỉ tiêu</span></div></header>
+    <div class="revenue-chart-scroll"><div class="revenue-chart ${scaleMax ? '' : 'revenue-chart-empty'}" style="--revenue-month-count:${monthKeys.length}">${bars}</div></div>
+    <div class="revenue-target-grid" aria-label="Thiết lập chỉ tiêu doanh thu theo tháng">${targetInputs}</div>
+  </article>`;
+}
 function workspacePage() {
   const analytics = state.analytics;
   const moneyByCurrency = (key) => (analytics?.revenueByCurrency || []).map((item) =>
@@ -336,6 +379,26 @@ function workspacePage() {
   const loading = state.analyticsLoading && !analytics;
   const unavailable = !analytics && !state.analyticsLoaded;
   const rangeLabel = { month: 'Tháng này', quarter: 'Quý này', year: 'Năm nay' }[state.analyticsRange] || 'Tháng này';
+  const periodFrom = analytics?.period?.from || dashboardPeriodRange(state.analyticsRange).from;
+  const periodTo = analytics?.period?.to || dashboardPeriodRange(state.analyticsRange).to;
+  const monthKeys = [];
+  const monthCursor = new Date(`${periodFrom.slice(0, 7)}-01T00:00:00`);
+  const monthLast = new Date(`${periodTo.slice(0, 7)}-01T00:00:00`);
+  while (monthCursor <= monthLast && monthKeys.length < 24) {
+    monthKeys.push(`${monthCursor.getFullYear()}-${String(monthCursor.getMonth() + 1).padStart(2, '0')}`);
+    monthCursor.setMonth(monthCursor.getMonth() + 1);
+  }
+  const revenueRows = state.analyticsRevenue?.monthlyRevenue || [];
+  const revenueCurrencies = [...new Set([
+    ...(analytics?.revenueByCurrency || []).map((item) => item.currency),
+    ...revenueRows.map((item) => item.currency),
+  ])].filter(Boolean);
+  if (!revenueCurrencies.length) revenueCurrencies.push('VND');
+  const revenueCharts = revenueCurrencies.map((currency) => {
+    const actualByMonth = new Map(revenueRows.filter((row) => row.currency === currency)
+      .map((row) => [row.month, Number(row.actual || 0)]));
+    return revenueChartMarkup(currency, monthKeys, actualByMonth);
+  }).join('');
   return `<div class="app-shell">${appSidebar('dashboard')}<main class="admin-content dashboard-content">
     <header class="topbar"><div><span class="eyebrow">SALES PERFORMANCE</span><h1>Dashboard tổng quan</h1><p class="topbar-sub">Xin chào ${escapeHtml(state.user?.name)} · Số liệu theo phạm vi dữ liệu được phân quyền.</p></div>
       <div class="topbar-actions dashboard-actions"><label class="dashboard-range-filter" for="dashboard-range"><span>Khoảng thời gian</span><select id="dashboard-range" data-input="analytics-range" ${state.analyticsLoading ? 'disabled' : ''}>
@@ -364,6 +427,7 @@ function workspacePage() {
         excludedStages: state.analyticsFunnel.dealFunnel.filter((stage) => stage.stage === 'LOST'),
       }) : `<article class="funnel-card funnel-loading">${state.analyticsLoading ? 'Đang tải phễu Deal…' : 'Không thể tải dữ liệu phễu Deal.'}</article>`}
     </section>
+    <section class="dashboard-revenue" aria-label="Doanh thu thực tế so với chỉ tiêu">${revenueCharts}</section>
     ${!loading && !state.analyticsLoading && state.analyticsLoaded && !state.error ? `<p class="dashboard-updated muted small">${rangeLabel} · ${escapeHtml(analytics.period?.from || '')} – ${escapeHtml(analytics.period?.to || '')}</p>` : ''}
   </main></div>`;
 }
@@ -1274,12 +1338,14 @@ async function loadAnalytics(force = false) {
   try {
     const period = dashboardPeriodRange(state.analyticsRange);
     const query = `from=${period.from}&to=${period.to}`;
-    const [analytics, analyticsFunnel] = await Promise.all([
+    const [analytics, analyticsFunnel, analyticsRevenue] = await Promise.all([
       api(`/analytics/kpis?${query}`),
       api(`/analytics/funnel?${query}`),
+      api(`/analytics/revenue-by-month?${query}`),
     ]);
     state.analytics = analytics;
     state.analyticsFunnel = analyticsFunnel;
+    state.analyticsRevenue = analyticsRevenue;
     state.analyticsLoaded = true;
     state.error = '';
   } catch (error) {
@@ -1861,7 +1927,25 @@ root.addEventListener('input', (event) => {
 });
 root.addEventListener('change', async (event) => {
   const input = event.target;
-  if (input.closest('form[data-form="product"]') && input.name) {
+  if (input.dataset.input === 'revenue-target') {
+    const amount = Number(input.value);
+    if (input.value !== '' && (!Number.isFinite(amount) || amount < 0)) {
+      input.setCustomValidity('Chỉ tiêu phải là số không âm.');
+      input.reportValidity();
+      return;
+    }
+    input.setCustomValidity('');
+    const targets = readRevenueTargets();
+    const key = `${input.dataset.currency}:${input.dataset.month}`;
+    if (input.value === '' || amount === 0) delete targets[key];
+    else targets[key] = amount;
+    try {
+      localStorage.setItem(revenueTargetStorageKey(), JSON.stringify(targets));
+    } catch {
+      state.error = 'Không thể lưu chỉ tiêu trên trình duyệt này.';
+    }
+    render();
+  } else if (input.closest('form[data-form="product"]') && input.name) {
     state.productDraft[input.name] = input.type === 'checkbox' ? input.checked : input.value;
   } else if (input.dataset.input === 'admin-role-filter') {
     state.adminRoleFilter = input.value;
@@ -1883,6 +1967,7 @@ root.addEventListener('change', async (event) => {
     state.analyticsRange = input.value;
     state.analytics = null;
     state.analyticsFunnel = null;
+    state.analyticsRevenue = null;
     state.analyticsLoaded = false;
     state.analyticsLoadAttempted = false;
     state.error = '';
