@@ -329,6 +329,32 @@ h2, h1, p { margin-top: 0; }
 .dashboard-money-row small { color: #64748b; font-size: 11px; font-weight: 700; }
 .dashboard-empty-value { font-size: 16px; font-weight: 700; color: #64748b; }
 .dashboard-updated { text-align: right; }
+.revenue-chart-card { margin-top: 22px; padding: 22px 24px; border: 1px solid #e2e8f0; border-radius: 16px; background: #fff; box-shadow: 0 4px 24px -4px rgba(11, 15, 25, .05); }
+.revenue-chart-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; }
+.revenue-chart-heading h2 { margin: 5px 0 4px; color: #17243b; font-size: 18px; }
+.revenue-chart-heading p { margin: 0; color: #64748b; font-size: 12px; }
+.revenue-chart-scroll { overflow-x: auto; margin-top: 16px; }
+.revenue-chart { display: block; width: 100%; min-width: 680px; height: auto; overflow: visible; }
+.revenue-chart text { fill: #64748b; font: 11px Inter, sans-serif; }
+.revenue-gridline { stroke: #e8edf5; stroke-width: 1; }
+.revenue-actual-bar { fill: #5574e8; }
+.revenue-target-line { fill: none; stroke: #f59e0b; stroke-width: 3; stroke-dasharray: 7 5; }
+.revenue-target-dot { fill: #f59e0b; stroke: #fff; stroke-width: 2; }
+.revenue-chart-legend { display: flex; justify-content: center; gap: 22px; color: #526078; font-size: 11px; }
+.revenue-chart-legend span { display: inline-flex; align-items: center; gap: 7px; }
+.revenue-chart-legend i { width: 10px; height: 10px; border-radius: 3px; background: #5574e8; }
+.revenue-chart-legend .legend-target { height: 3px; border-radius: 0; background: #f59e0b; }
+.revenue-target-form { display: flex; align-items: flex-end; gap: 12px; margin-top: 20px; padding-top: 16px; border-top: 1px solid #edf1f6; }
+.revenue-target-form > strong { align-self: center; margin-right: auto; color: #263550; font-size: 12px; }
+.revenue-target-form label { display: grid; gap: 5px; color: #64748b; font-size: 10px; font-weight: 700; }
+.revenue-target-form input, .revenue-target-form select { min-height: 36px; padding: 6px 9px; border: 1px solid #dbe3f0; border-radius: 8px; background: #fff; color: #334155; font: inherit; font-size: 12px; }
+.revenue-empty { padding: 22px 0; text-align: center; }
+@media (max-width: 680px) {
+  .revenue-chart-card { padding: 17px 14px; }
+  .revenue-chart-heading { align-items: flex-start; flex-direction: column; }
+  .revenue-target-form { align-items: stretch; flex-direction: column; }
+  .revenue-target-form > strong { align-self: flex-start; }
+}
 
 /* 4. Modern Form Card */
 .modern-form-card {

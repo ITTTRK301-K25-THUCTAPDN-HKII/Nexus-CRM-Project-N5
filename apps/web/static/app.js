@@ -6,6 +6,8 @@ const state = {
   notice: '',
   users: [],
   analytics: null,
+  revenueTrend: null,
+  revenueTrendCurrency: '',
   analyticsRange: 'month',
   analyticsLoaded: false,
   analyticsLoadAttempted: false,
@@ -299,6 +301,26 @@ function workspacePage() {
   const loading = state.analyticsLoading && !analytics;
   const unavailable = !analytics && !state.analyticsLoaded;
   const rangeLabel = { month: 'Tháng này', quarter: 'Quý này', year: 'Năm nay' }[state.analyticsRange] || 'Tháng này';
+  const trend = state.revenueTrend;
+  const currencies = [...new Set(['VND', 'USD', ...(trend?.currencies || [])])];
+  const chartCurrency = currencies.includes(state.revenueTrendCurrency) ? state.revenueTrendCurrency : (currencies[0] || 'VND');
+  const chartRows = (trend?.series || []).filter((item) => item.currency === chartCurrency);
+  const chartMax = Math.max(1, ...chartRows.map((item) => Math.max(Number(item.actual || 0), Number(item.target || 0))));
+  const chartWidth = 900; const chartHeight = 250; const chartTop = 22; const chartBottom = 204;
+  const slot = chartWidth / Math.max(chartRows.length, 1);
+  const linePoints = chartRows.filter((item) => item.hasTarget).map((item) => {
+    const index = chartRows.indexOf(item);
+    return `${(index * slot + slot / 2).toFixed(1)},${(chartBottom - Number(item.target || 0) / chartMax * (chartBottom - chartTop)).toFixed(1)}`;
+  }).join(' ');
+  const targetDots = chartRows.map((item, index) => item.hasTarget
+    ? `<circle class="revenue-target-dot" cx="${(index * slot + slot / 2).toFixed(1)}" cy="${(chartBottom - Number(item.target || 0) / chartMax * (chartBottom - chartTop)).toFixed(1)}" r="3.5"/>`
+    : '').join('');
+  const chartBars = chartRows.map((item, index) => {
+    const barHeight = Number(item.actual || 0) / chartMax * (chartBottom - chartTop);
+    const x = index * slot + slot * 0.24;
+    const label = new Date(`${item.month}-01T00:00:00`).toLocaleDateString('vi-VN', { month: 'short', year: '2-digit' });
+    return `<g><title>${escapeHtml(label)} · Thực tế ${escapeHtml(Number(item.actual || 0).toLocaleString('vi-VN'))} ${escapeHtml(chartCurrency)} · Chỉ tiêu ${escapeHtml(Number(item.target || 0).toLocaleString('vi-VN'))} ${escapeHtml(chartCurrency)}</title><rect class="revenue-actual-bar" x="${x.toFixed(1)}" y="${(chartBottom - barHeight).toFixed(1)}" width="${(slot * 0.52).toFixed(1)}" height="${Math.max(0, barHeight).toFixed(1)}" rx="4"/><text x="${(index * slot + slot / 2).toFixed(1)}" y="228" text-anchor="middle">${escapeHtml(label)}</text></g>`;
+  }).join('');
   return `<div class="app-shell">${appSidebar('dashboard')}<main class="admin-content dashboard-content">
     <header class="topbar"><div><span class="eyebrow">SALES PERFORMANCE</span><h1>Dashboard tổng quan</h1><p class="topbar-sub">Xin chào ${escapeHtml(state.user?.name)} · Số liệu theo phạm vi dữ liệu được phân quyền.</p></div>
       <div class="topbar-actions dashboard-actions"><label class="dashboard-range-filter" for="dashboard-range"><span>Khoảng thời gian</span><select id="dashboard-range" data-input="analytics-range" ${state.analyticsLoading ? 'disabled' : ''}>
@@ -312,6 +334,12 @@ function workspacePage() {
       <article class="kpi-card"><div class="kpi-info"><span class="kpi-label">Tỷ lệ Win</span><strong class="kpi-value text-emerald">${unavailable ? '—' : `${Number(analytics.deals.winRate || 0).toLocaleString('vi-VN')}%`}</strong><span class="kpi-hint">Deal WON / (WON + LOST)</span></div><div class="kpi-icon-wrap emerald-wrap" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 4 4L19 6"/><circle cx="12" cy="12" r="10"/></svg></div></article>
       <article class="kpi-card dashboard-currency-card"><div class="kpi-info"><span class="kpi-label">Doanh số Won</span>${unavailable ? '<strong class="kpi-value">—</strong>' : moneyByCurrency('wonValue')}<span class="kpi-hint">Giá trị Deal đã chốt thành công</span></div><div class="kpi-icon-wrap indigo-wrap" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20m5-16H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></div></article>
       <article class="kpi-card dashboard-currency-card"><div class="kpi-info"><span class="kpi-label">Pipeline Value</span>${unavailable ? '<strong class="kpi-value">—</strong>' : moneyByCurrency('pipelineValue')}<span class="kpi-hint">Tổng giá trị Deal đang mở</span></div><div class="kpi-icon-wrap rose-wrap" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18M7 14l4-4 4 4 6-7"/></svg></div></article>
+    </section>
+    <section class="revenue-chart-card" aria-labelledby="revenue-chart-title">
+      <div class="revenue-chart-heading"><div><span class="eyebrow">DOANH THU THEO THÁNG</span><h2 id="revenue-chart-title">Thực tế và chỉ tiêu</h2><p>Doanh thu WON theo ngày chốt, nhóm riêng từng đơn vị tiền tệ.</p></div>
+        <label class="dashboard-range-filter" for="revenue-currency"><span>Tiền tệ</span><select id="revenue-currency" data-input="revenue-currency" ${!currencies.length ? 'disabled' : ''}>${(currencies.length ? currencies : ['VND']).map((currency) => `<option value="${escapeHtml(currency)}" ${currency === chartCurrency ? 'selected' : ''}>${escapeHtml(currency)}</option>`).join('')}</select></label></div>
+      ${!trend ? '<p class="muted">Đang tải biểu đồ…</p>' : !chartRows.length ? '<p class="muted revenue-empty">Chưa có doanh thu hoặc chỉ tiêu trong 12 tháng gần nhất.</p>' : `<div class="revenue-chart-scroll"><svg class="revenue-chart" viewBox="0 0 ${chartWidth} ${chartHeight}" role="img" aria-label="Doanh thu thực tế và chỉ tiêu ${escapeHtml(chartCurrency)} trong 12 tháng gần nhất"><line class="revenue-gridline" x1="0" y1="${chartBottom}" x2="${chartWidth}" y2="${chartBottom}"/><polyline class="revenue-target-line" points="${linePoints}"/>${targetDots}${chartBars}</svg></div><div class="revenue-chart-legend"><span><i class="legend-actual"></i>Thực tế</span><span><i class="legend-target"></i>Chỉ tiêu</span></div>`}
+      <form class="revenue-target-form" data-form="revenue-target"><strong>Đặt chỉ tiêu</strong><label>Tháng<input name="month" type="month" min="${trend?.period.from || dashboardPeriodRange('year').from.slice(0, 7)}" max="${trend?.period.to || dashboardPeriodRange('month').from.slice(0, 7)}" value="${dashboardPeriodRange('month').from.slice(0, 7)}" required></label><label>Tiền tệ<select name="currency">${currencies.map((currency) => `<option value="${escapeHtml(currency)}" ${currency === chartCurrency ? 'selected' : ''}>${escapeHtml(currency)}</option>`).join('')}</select></label><label>Chỉ tiêu<input name="targetAmount" type="number" min="0" step="0.01" required placeholder="Nhập số tiền"></label><button class="primary-button compact" type="submit">Lưu chỉ tiêu</button></form>
     </section>
     ${!loading && !state.analyticsLoading && state.analyticsLoaded && !state.error ? `<p class="dashboard-updated muted small">${rangeLabel} · ${escapeHtml(analytics.period?.from || '')} – ${escapeHtml(analytics.period?.to || '')}</p>` : ''}
   </main></div>`;
@@ -1223,6 +1251,8 @@ async function loadAnalytics(force = false) {
   try {
     const period = dashboardPeriodRange(state.analyticsRange);
     state.analytics = await api(`/analytics/kpis?from=${period.from}&to=${period.to}`);
+    state.revenueTrend = await api('/analytics/revenue-trend?months=12');
+    if (!state.revenueTrendCurrency) state.revenueTrendCurrency = state.revenueTrend.currencies[0] || 'VND';
     state.analyticsLoaded = true;
     state.error = '';
   } catch (error) {
@@ -1874,6 +1904,9 @@ root.addEventListener('change', async (event) => {
       state.error = error.message;
     }
     render();
+  } else if (input.dataset.input === 'revenue-currency') {
+    state.revenueTrendCurrency = input.value;
+    render();
   }
 });
 root.addEventListener('submit', async (event) => {
@@ -1901,6 +1934,16 @@ root.addEventListener('submit', async (event) => {
       state.error = '';
       render();
       setTimeout(() => navigate('/login', true), 1600);
+    } else if (form.dataset.form === 'revenue-target') {
+      await api('/analytics/revenue-targets', {
+        method: 'PUT',
+        body: JSON.stringify({ ...data, targetAmount: Number(data.targetAmount) }),
+      });
+      state.revenueTrend = await api('/analytics/revenue-trend?months=12');
+      state.revenueTrendCurrency = data.currency;
+      state.notice = 'Đã lưu chỉ tiêu doanh thu.';
+      state.error = '';
+      render();
     } else if (form.dataset.form === 'create-user') {
       await api('/admin/users', { method: 'POST', body: JSON.stringify(data) });
       state.users = (await api('/admin/users')).users;

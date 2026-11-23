@@ -789,6 +789,106 @@ def analytics_share(count, total):
     return round(count * 100 / total, 2) if total else 0.0
 
 
+def revenue_target_payload(data):
+    if set(data) != {"month", "currency", "targetAmount"}:
+        raise ValueError("Chỉ tiêu cần có month, currency và targetAmount.")
+    month = data.get("month")
+    try:
+        month_start = date.fromisoformat(f"{month}-01")
+    except (TypeError, ValueError) as error:
+        raise ValueError("Tháng cần theo định dạng YYYY-MM.") from error
+    if month_start.strftime("%Y-%m") != month:
+        raise ValueError("Tháng cần theo định dạng YYYY-MM.")
+    currency = str(data.get("currency", "")).strip().upper()
+    if not re.fullmatch(r"[A-Z]{3}", currency):
+        raise ValueError("Mã tiền tệ cần gồm 3 chữ cái.")
+    try:
+        amount = Decimal(str(data.get("targetAmount")))
+    except (InvalidOperation, ValueError) as error:
+        raise ValueError("Chỉ tiêu doanh thu không hợp lệ.") from error
+    if not amount.is_finite() or amount < 0 or amount > Decimal("9999999999999.99"):
+        raise ValueError("Chỉ tiêu phải từ 0 đến 9,999,999,999,999.99.")
+    return month_start, currency, amount
+
+
+@app.get("/api/analytics/revenue-trend")
+@auth_required
+def revenue_trend():
+    if set(request.args) - {"months", "to"}:
+        return json_error("Chỉ chấp nhận tham số months và to.", 400)
+    try:
+        months = int(request.args.get("months", "12"))
+        selected_end = date.fromisoformat(request.args["to"] + "-01") if "to" in request.args else date.today().replace(day=1)
+        if "to" in request.args and selected_end.strftime("%Y-%m") != request.args["to"]:
+            raise ValueError
+        if not 1 <= months <= 24:
+            raise ValueError
+    except (TypeError, ValueError):
+        return json_error("months phải từ 1 đến 24 và to cần theo định dạng YYYY-MM.", 400)
+    end_exclusive = (selected_end.replace(day=28) + timedelta(days=4)).replace(day=1)
+    start = selected_end
+    for _ in range(months - 1):
+        start = (start.replace(day=1) - timedelta(days=1)).replace(day=1)
+
+    scope_sql, scope_values = deal_scope(g.user, "d.owner_user_id")
+    filters = ["d.stage='WON'", "d.closed_date >= %s", "d.closed_date < %s"]
+    if scope_sql:
+        filters.insert(0, scope_sql)
+    actual_rows = query(
+        "SELECT DATE_FORMAT(d.closed_date, '%%Y-%%m') AS month,d.currency,"
+        "COALESCE(SUM(COALESCE(d.closed_amount,d.amount)),0) AS actual "
+        "FROM deals d WHERE " + " AND ".join(filters) +
+        " GROUP BY DATE_FORMAT(d.closed_date, '%%Y-%%m'),d.currency ORDER BY month,d.currency",
+        tuple(scope_values + [start, end_exclusive]),
+    )
+    target_rows = query(
+        "SELECT DATE_FORMAT(month_start, '%%Y-%%m') AS month,currency,target_amount AS target "
+        "FROM monthly_revenue_targets WHERE user_id=%s AND month_start >= %s AND month_start < %s "
+        "ORDER BY month,currency",
+        (g.user["id"], start, end_exclusive),
+    )
+    series = {}
+    for row in actual_rows:
+        item = series.setdefault((row["month"], row["currency"]), {"actual": 0, "target": 0, "hasTarget": False})
+        item["actual"] = row["actual"] or 0
+    for row in target_rows:
+        item = series.setdefault((row["month"], row["currency"]), {"actual": 0, "target": 0, "hasTarget": False})
+        item["target"] = row["target"] or 0
+        item["hasTarget"] = True
+
+    month_keys = []
+    cursor = start
+    while cursor < end_exclusive:
+        month_keys.append(cursor.strftime("%Y-%m"))
+        cursor = (cursor.replace(day=28) + timedelta(days=4)).replace(day=1)
+    currencies = sorted({currency for _, currency in series})
+    return jsonify({
+        "period": {"from": start.strftime("%Y-%m"), "to": selected_end.strftime("%Y-%m")},
+        "months": month_keys,
+        "currencies": currencies,
+        "series": [{"month": month, "currency": currency, **series.get((month, currency), {"actual": 0, "target": 0, "hasTarget": False})}
+                   for month in month_keys for currency in currencies],
+    })
+
+
+@app.put("/api/analytics/revenue-targets")
+@auth_required
+def save_revenue_target():
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return json_error("Dữ liệu chỉ tiêu không hợp lệ.", 400)
+    try:
+        month_start, currency, amount = revenue_target_payload(data)
+    except ValueError as error:
+        return json_error(str(error), 400)
+    execute(
+        "INSERT INTO monthly_revenue_targets (user_id,month_start,currency,target_amount) "
+        "VALUES (%s,%s,%s,%s) ON DUPLICATE KEY UPDATE target_amount=VALUES(target_amount)",
+        (g.user["id"], month_start, currency, amount),
+    )
+    return jsonify({"month": month_start.strftime("%Y-%m"), "currency": currency, "targetAmount": float(amount)})
+
+
 def sales_performance_period():
     if set(request.args) - {"period", "date"}:
         raise ValueError("Chỉ chấp nhận period (day, week, month, quarter) và date (YYYY-MM-DD).")

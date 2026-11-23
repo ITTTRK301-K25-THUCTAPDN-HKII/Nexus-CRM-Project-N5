@@ -53,6 +53,18 @@ Node.js and npm are not required to run this version of the project. The Deal bo
     assignee/due-date indexes. New databases receive these indexes from
     `schema.mysql.sql`. Lead phone, Lead status, Deal stage, and Task reminder
     indexes already exist and are not duplicated.
+12. For an existing database, run
+    `packages/api/sql/migrations/012_monthly_revenue_targets.sql` once to store
+    monthly revenue targets. New databases include this table in
+    `schema.mysql.sql`.
+
+### Load defense demo data
+
+After creating the schema, start the app once in development mode so it can
+create the demo users. Then run `packages/api/sql/seed_defense_demo.sql` in
+MySQL Workbench or another MySQL client. The script adds repeatable sample rows
+with the `DEMO -` prefix and does not delete existing data. Do not run it against
+a production database.
 
 ## 2. Configure the database connection
 
@@ -76,6 +88,13 @@ format to filter records by creation date and apply the caller's existing
 ownership scope. KPI and funnel values are reported separately per currency;
 deal win rate is won deals divided by closed (won or lost) deals, while lead
 conversion rate is converted leads divided by active leads.
+
+The dashboard compares won revenue by closing month with monthly targets at
+`GET /api/analytics/revenue-trend?months=12`. Won revenue uses `closed_amount`
+when available, falling back to the Deal amount, and stays separated by
+currency. Managers set team targets and Sales users set their own using
+`PUT /api/analytics/revenue-targets` with `month` (`YYYY-MM`), `currency` and
+`targetAmount`; targets are stored per user, month and currency.
 
 Managers and Admins can request per-Sale performance with
 `GET /api/analytics/sales-performance?period=month&date=2026-11-20`. Supported
