@@ -1,6 +1,7 @@
 import sys
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
 from unittest.mock import patch
 
@@ -232,6 +233,43 @@ class FlaskAppTests(unittest.TestCase):
         self.assertEqual(response.json["stage"], "PROPOSAL")
         self.assertIn("INNER JOIN users u ON u.id=d.owner_user_id", cursor.statements[0][0])
         self.assertTrue(any("INSERT INTO deal_history" in statement for statement, _ in cursor.statements))
+
+    def test_marking_deal_won_persists_actual_amount_and_close_date(self):
+        sale = self.authenticated_client("Sale", 8)
+
+        class FakeCursor:
+            def __init__(self):
+                self.row = {
+                    "id": 41, "ownerUserId": 8, "ownerRole": "Sale",
+                    "stage": "NEGOTIATION", "amount": 100, "version": 2,
+                    "expectedCloseDate": None,
+                }
+                self.rowcount = 1
+                self.statements = []
+
+            def execute(self, statement, values):
+                self.statements.append((statement, values))
+
+            def fetchone(self):
+                return self.row
+
+        cursor = FakeCursor()
+        with patch.object(api, "query", return_value=[sale]), patch.object(
+            api, "transaction", side_effect=lambda work: work(cursor)
+        ):
+            response = self.client.patch(
+                "/api/deals/41/stage",
+                json={
+                    "stage": "WON", "expectedStage": "NEGOTIATION", "expectedVersion": 2,
+                    "closedAmount": 1250, "closedDate": "2026-11-23",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json["closedAmount"], 1250)
+        self.assertEqual(response.json["closedDate"], "2026-11-23")
+        update = next(values for statement, values in cursor.statements if statement.startswith("UPDATE deals"))
+        self.assertEqual(update[:4], ("WON", Decimal("1250"), date(2026, 11, 23), None))
 
 
 if __name__ == "__main__":

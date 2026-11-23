@@ -38,6 +38,8 @@ const state = {
   quoteValidUntil: '',
   quoteLines: [],
   quotePreviewId: null,
+  quoteActionBusyId: '',
+  quoteRejectId: '',
   dealFormOpen: false,
   dealAccounts: [],
   dealAssignees: [],
@@ -162,6 +164,15 @@ function navigate(path, replace = false) {
   state.interactionSummary = null;
   state.geminiTaskNotice = '';
   state.emailCopied = '';
+  // Dashboard metrics must be refreshed when returning from Deals/other pages;
+  // otherwise a newly won Deal can leave the actual revenue stuck at 0.
+  if (path.split('?')[0] === '/workspace') {
+    state.analytics = null;
+    state.analyticsFunnel = null;
+    state.analyticsRevenue = null;
+    state.analyticsLoaded = false;
+    state.analyticsLoadAttempted = false;
+  }
   render();
 }
 const brand = '<div class="brand"><span class="brand-mark">N</span><div class="brand-info"><span>NEXUS<span class="brand-light">CRM</span></span><span class="brand-sub">Enterprise</span></div></div>';
@@ -250,7 +261,6 @@ function authPage() {
     <div class="label-row"><label for="password">Mật khẩu</label><a href="/forgot-password">Quên mật khẩu?</a></div>
     <div class="input-wrap">▣ <input id="password" name="password" type="password" autocomplete="current-password" required minlength="8" maxlength="128" placeholder="Nhập mật khẩu"></div>
     ${alertBox(state.error)}<button class="primary-button" type="submit" ${state.loginBusy ? 'disabled' : ''}>${state.loginBusy ? 'Đang đăng nhập...' : 'Đăng nhập →'}</button></form>
-    <div class="demo-box"><strong>Tài khoản demo</strong><span>admin@nexus.local</span><span>Mật khẩu: Admin123!</span></div>
     <p class="legal">Phiên đăng nhập được bảo vệ bằng cookie HttpOnly.</p></div></section></main>`;
 }
 function forgotPage() {
@@ -347,25 +357,43 @@ function revenueChartMarkup(currency, monthKeys, actualByMonth) {
   });
   const actualValues = monthKeys.map((month) => Number(actualByMonth.get(month) || 0));
   const scaleMax = Math.max(0, ...targetValues, ...actualValues);
+  const plotMax = scaleMax > 0 ? scaleMax * 1.12 : 1;
   const formatMoney = (value) => new Intl.NumberFormat('vi-VN', { maximumFractionDigits: 2 }).format(value);
+  const formatAxis = (value) => new Intl.NumberFormat('vi-VN', {
+    notation: 'compact', maximumFractionDigits: 1,
+  }).format(value);
+  const chartHeight = 170;
+  const axisTicks = Array.from({ length: 5 }, (_, index) => {
+    const value = (plotMax * (4 - index)) / 4;
+    return `<span class="revenue-axis-tick">${escapeHtml(formatAxis(value))}</span>`;
+  }).join('');
+  const targetPoints = targetValues.map((target, index) => ({
+    x: ((index + 0.5) / Math.max(1, targetValues.length)) * 1000,
+    y: 10 + chartHeight - (target / plotMax) * chartHeight,
+  }));
+  const targetLine = Math.max(0, ...targetValues) > 0
+    ? `<svg class="revenue-target-line" viewBox="0 0 1000 190" preserveAspectRatio="none" aria-label="Đường chỉ tiêu doanh thu">${targetPoints.length > 1 ? `<polyline points="${targetPoints.map((point) => `${point.x},${point.y}`).join(' ')}" />` : `<line x1="100" y1="${targetPoints[0].y}" x2="900" y2="${targetPoints[0].y}" />`}${targetPoints.map((point) => `<circle cx="${point.x}" cy="${point.y}" r="5" />`).join('')}</svg>`
+    : '';
   const bars = monthKeys.map((month, index) => {
     const actual = actualValues[index];
     const target = targetValues[index];
-    const actualHeight = scaleMax ? actual / scaleMax * 100 : 0;
-    const targetHeight = scaleMax ? target / scaleMax * 100 : 0;
+    const actualHeight = (actual / plotMax) * chartHeight;
     return `<div class="revenue-month-column" role="group" aria-label="${escapeHtml(month)}">
       <div class="revenue-bars" aria-label="${escapeHtml(month)}: thực tế ${escapeHtml(formatMoney(actual))} ${escapeHtml(currency)}, chỉ tiêu ${escapeHtml(formatMoney(target))} ${escapeHtml(currency)}">
-        <span class="revenue-bar revenue-bar-actual" style="height:${actualHeight}%" title="Thực tế: ${escapeHtml(formatMoney(actual))} ${escapeHtml(currency)}"></span>
-        <span class="revenue-bar revenue-bar-target" style="height:${targetHeight}%" title="Chỉ tiêu: ${escapeHtml(formatMoney(target))} ${escapeHtml(currency)}"></span>
-      </div><span class="revenue-month-label">${escapeHtml(month.slice(5))}/${escapeHtml(month.slice(0, 4))}</span></div>`;
+        ${actual > 0 ? `<span class="revenue-bar revenue-bar-actual" style="height:${actualHeight.toFixed(1)}px" title="Thực tế: ${escapeHtml(formatMoney(actual))} ${escapeHtml(currency)}"></span>` : '<span class="revenue-zero-marker" title="Chưa ghi nhận doanh thu thực tế"></span>'}
+      </div><span class="revenue-month-label">${escapeHtml(month.slice(5))}/${escapeHtml(month.slice(0, 4))}</span><span class="revenue-month-values"><span>TT ${escapeHtml(formatMoney(actual))}</span><span>CT ${escapeHtml(formatMoney(target))}</span></span></div>`;
   }).join('');
+  const actualEmptyNotice = actualValues.some((value) => value > 0)
+    ? ''
+    : '<p class="revenue-empty-notice">Chưa có doanh thu thực tế trong kỳ. Deal cần ở trạng thái WON và có ngày chốt thuộc khoảng thời gian đang xem.</p>';
   const targetInputs = monthKeys.map((month, index) => `<label class="revenue-target-input"><span>${escapeHtml(month.slice(5))}/${escapeHtml(month.slice(0, 4))}</span>
     <input type="number" min="0" step="any" inputmode="decimal" value="${targetValues[index] || ''}" placeholder="Nhập chỉ tiêu" data-input="revenue-target" data-month="${escapeHtml(month)}" data-currency="${escapeHtml(currency)}">
   </label>`).join('');
   return `<article class="funnel-card revenue-card"><header class="funnel-card-heading"><div><h3>Doanh thu thực tế vs chỉ tiêu · ${escapeHtml(currency)}</h3>
-    <p>Doanh thu Deal WON theo ngày chốt. Nhập chỉ tiêu theo từng tháng; chỉ tiêu được lưu trên trình duyệt này.</p></div>
+    <p>Doanh thu thực tế lấy từ Deal WON theo ngày chốt. Nhập chỉ tiêu theo từng tháng; chỉ tiêu được lưu trên trình duyệt này.</p></div>
     <div class="revenue-legend"><span><i class="revenue-legend-actual"></i>Thực tế</span><span><i class="revenue-legend-target"></i>Chỉ tiêu</span></div></header>
-    <div class="revenue-chart-scroll"><div class="revenue-chart ${scaleMax ? '' : 'revenue-chart-empty'}" style="--revenue-month-count:${monthKeys.length}">${bars}</div></div>
+    <div class="revenue-chart-scroll"><div class="revenue-plot"><div class="revenue-y-axis" aria-label="Thang doanh thu ${escapeHtml(currency)}"><div class="revenue-axis-ticks">${axisTicks}</div><span class="revenue-axis-unit">${escapeHtml(currency)}</span></div><div class="revenue-chart ${scaleMax ? '' : 'revenue-chart-empty'}" style="--revenue-month-count:${monthKeys.length}">${bars}${targetLine}</div></div></div>
+    ${actualEmptyNotice}
     <div class="revenue-target-grid" aria-label="Thiết lập chỉ tiêu doanh thu theo tháng">${targetInputs}</div>
   </article>`;
 }
@@ -511,21 +539,35 @@ function quoteLine(line, index, availableProducts, currency) {
   </div>`;
 }
 function quotesPage() {
-  const rows = state.quotes.map((quote) => `<tr>
+  const roleCanApprove = ['Admin', 'Manager'].includes(state.user?.role);
+  const rows = state.quotes.map((quote) => {
+    const busy = state.quoteActionBusyId === String(quote.id);
+    const approvalLabels = { NOT_REQUESTED: '', PENDING: 'Chờ duyệt', APPROVED: 'Đã duyệt', REJECTED: 'Từ chối duyệt' };
+    let workflowActions = '';
+    if (quote.status === 'DRAFT' && ['NOT_REQUESTED', 'REJECTED'].includes(quote.approvalStatus)) {
+      workflowActions = `<button class="text-button quote-workflow-button" data-action="request-quote-approval" data-id="${escapeHtml(quote.id)}" ${busy ? 'disabled' : ''}>${busy ? 'Đang xử lý…' : 'Gửi duyệt'}</button>`;
+    } else if (quote.status === 'DRAFT' && quote.approvalStatus === 'PENDING' && roleCanApprove) {
+      workflowActions = `<button class="text-button quote-workflow-button quote-approve-button" data-action="approve-quote" data-id="${escapeHtml(quote.id)}" ${busy ? 'disabled' : ''}>${busy ? 'Đang xử lý…' : 'Duyệt'}</button><button class="text-button quote-workflow-button quote-reject-button" data-action="reject-quote" data-id="${escapeHtml(quote.id)}" ${busy ? 'disabled' : ''}>Từ chối</button>`;
+    } else if (quote.status === 'DRAFT' && quote.approvalStatus === 'APPROVED') {
+      workflowActions = `<button class="text-button quote-workflow-button quote-approve-button" data-action="send-quote" data-id="${escapeHtml(quote.id)}" ${busy ? 'disabled' : ''}>${busy ? 'Đang xử lý…' : 'Đánh dấu đã gửi'}</button>`;
+    }
+    return `<tr>
     <td><strong>${escapeHtml(quote.quoteNumber)}</strong><span class="quote-table-sub">${escapeHtml(quote.accountName || '')}</span></td>
     <td>${escapeHtml(quote.dealName || '—')}</td>
-    <td><span class="quote-status quote-status-${String(quote.status).toLowerCase()}">${escapeHtml(({ DRAFT: 'Bản nháp', SENT: 'Đã gửi', ACCEPTED: 'Đã chấp nhận', REJECTED: 'Khách từ chối', EXPIRED: 'Hết hạn' })[quote.status] || quote.status)}</span></td>
+    <td><span class="quote-status quote-status-${String(quote.status).toLowerCase()}">${escapeHtml(({ DRAFT: 'Bản nháp', SENT: 'Đã gửi', ACCEPTED: 'Đã chấp nhận', REJECTED: 'Khách từ chối', EXPIRED: 'Hết hạn' })[quote.status] || quote.status)}</span>${approvalLabels[quote.approvalStatus] ? `<span class="quote-approval-status quote-approval-${String(quote.approvalStatus).toLowerCase()}">${approvalLabels[quote.approvalStatus]}</span>` : ''}${quote.approvalStatus === 'REJECTED' && quote.approvalNote ? `<span class="quote-table-sub">Lý do: ${escapeHtml(quote.approvalNote)}</span>` : ''}</td>
     <td>${quoteFormatCents(quoteMoneyParts(quote.grandTotal ?? quote.totalAmount, 2), quote.currency)}</td>
-    <td><div class="row-actions"><button class="text-button" data-action="preview-quote" data-id="${escapeHtml(quote.id)}">Xem trước</button><a class="text-button" href="/api/quotes/${encodeURIComponent(quote.id)}/pdf">Tải PDF</a></div></td>
-  </tr>`).join('');
+    <td><div class="row-actions quote-row-actions">${workflowActions}<button class="text-button" data-action="preview-quote" data-id="${escapeHtml(quote.id)}">Xem trước</button><a class="text-button" href="/api/quotes/${encodeURIComponent(quote.id)}/pdf">Tải PDF</a></div></td>
+  </tr>`;
+  }).join('');
   return `<div class="app-shell">${appSidebar('quotes')}<main class="admin-content quote-content">
     <header class="topbar"><div><span class="eyebrow">SALES DOCUMENTS</span><h1>Báo giá</h1></div><div class="admin-avatar">${escapeHtml(state.user?.role || '')}</div></header>
     ${alertBox(state.error)}${alertBox(state.notice, 'success')}
-    <section class="page-intro"><div><h2>Danh sách báo giá</h2><p class="muted">Tạo báo giá từ Deal và danh mục sản phẩm hiện hành.</p></div><button class="primary-button compact" data-action="new-quote">＋ Lập báo giá</button></section>
+    <section class="page-intro"><div><h2>Danh sách báo giá</h2><p class="muted">Tạo báo giá từ Deal và danh mục sản phẩm. Cần duyệt trước khi đánh dấu Đã gửi; trạng thái này chưa gửi email tự động.</p></div><button class="primary-button compact" data-action="new-quote">＋ Lập báo giá</button></section>
     <section class="customer-table-card quote-list-card"><div class="table-scroll"><table class="customer-data-table quote-table">
       <thead><tr><th>MÃ BÁO GIÁ / KHÁCH HÀNG</th><th>DEAL</th><th>TRẠNG THÁI</th><th>TỔNG CỘNG</th><th>TÀI LIỆU</th></tr></thead>
       <tbody>${rows || `<tr><td class="empty-row" colspan="5">${state.quotesLoading || (!state.quotesLoadAttempted && !state.quotesLoaded) ? 'Đang tải báo giá...' : state.quotesLoadFailed ? 'Không tải được dữ liệu báo giá. ' : 'Chưa có báo giá. Hãy tạo báo giá đầu tiên.'}${state.quotesLoadFailed ? '<button class="text-button" data-action="retry-quotes">Thử tải lại</button>' : ''}</td></tr>`}</tbody>
     </table></div></section>
+    ${state.quoteRejectId ? `<div class="modal-backdrop quote-reject-backdrop"><section class="customer-modal quote-reject-modal" role="dialog" aria-modal="true" aria-labelledby="quote-reject-title"><div class="modal-heading"><div><span class="eyebrow">QUY TRÌNH DUYỆT</span><h2 id="quote-reject-title">Từ chối báo giá</h2></div><button class="modal-close" type="button" data-action="cancel-quote-rejection" aria-label="Đóng" ${state.quoteActionBusyId ? 'disabled' : ''}>×</button></div><p class="muted">Vui lòng ghi rõ lý do để nhân viên biết nội dung cần điều chỉnh.</p><form class="customer-form single-column" data-form="quote-rejection"><label class="wide-field">Lý do từ chối *<textarea name="note" rows="4" required minlength="2" maxlength="1000" placeholder="Nhập lý do từ chối..."></textarea></label><div class="form-actions"><button type="button" class="secondary-button compact" data-action="cancel-quote-rejection" ${state.quoteActionBusyId ? 'disabled' : ''}>Hủy</button><button type="submit" class="primary-button compact" ${state.quoteActionBusyId ? 'disabled' : ''}>${state.quoteActionBusyId ? 'Đang xử lý…' : 'Xác nhận từ chối'}</button></div></form></section></div>` : ''}
     ${quotePreviewModal()}
   </main></div>`;
 }
@@ -1367,6 +1409,27 @@ async function loadDeals() {
   }
   if (route() === '/deals') render();
 }
+async function runQuoteWorkflowAction(quoteId, action, payload, successMessage) {
+  if (state.quoteActionBusyId) return;
+  state.quoteActionBusyId = String(quoteId);
+  state.error = '';
+  state.notice = '';
+  if (action === 'approval') state.quoteRejectId = '';
+  render();
+  try {
+    await api(`/quotes/${encodeURIComponent(quoteId)}/${action}`, {
+      method: action === 'status' ? 'PATCH' : 'POST',
+      body: JSON.stringify(payload),
+    });
+    state.notice = successMessage;
+    await loadQuotes();
+  } catch (error) {
+    state.error = error.message || 'Không thể cập nhật báo giá.';
+  } finally {
+    state.quoteActionBusyId = '';
+    if (route() === '/quotes') render();
+  }
+}
 async function loadQuotes() {
   state.quotesLoading = true;
   state.quotesLoadAttempted = true;
@@ -1693,6 +1756,29 @@ root.addEventListener('click', async (event) => {
     case 'preview-quote':
       state.quotePreviewId = String(id);
       render();
+      break;
+    case 'request-quote-approval':
+      void runQuoteWorkflowAction(id, 'approval-request', {}, 'Đã gửi yêu cầu duyệt báo giá.');
+      break;
+    case 'approve-quote':
+      void runQuoteWorkflowAction(id, 'approval', { decision: 'APPROVED' }, 'Đã duyệt báo giá. Có thể chuyển sang Đã gửi.');
+      break;
+    case 'reject-quote':
+      state.quoteRejectId = String(id);
+      state.error = '';
+      render();
+      break;
+    case 'cancel-quote-rejection':
+      if (!state.quoteActionBusyId) {
+        state.quoteRejectId = '';
+        state.error = '';
+        render();
+      }
+      break;
+    case 'send-quote':
+      if (window.confirm('Xác nhận chuyển báo giá đã duyệt sang trạng thái “Đã gửi”?')) {
+        void runQuoteWorkflowAction(id, 'status', { status: 'SENT' }, 'Báo giá đã chuyển sang trạng thái Đã gửi.');
+      }
       break;
     case 'close-quote-preview':
       if (button.classList.contains('modal-backdrop') && event.target !== button) break;
@@ -2163,6 +2249,14 @@ root.addEventListener('submit', async (event) => {
       navigate('/quotes');
       state.notice = `Đã tạo báo giá ${result.quote.quoteNumber}.`;
       render();
+    } else if (form.dataset.form === 'quote-rejection') {
+      if (!state.quoteRejectId) throw new Error('Không tìm thấy báo giá cần từ chối.');
+      await runQuoteWorkflowAction(
+        state.quoteRejectId,
+        'approval',
+        { decision: 'REJECTED', note: String(data.note || '').trim() },
+        'Đã từ chối báo giá và lưu lý do.',
+      );
     }
   } catch (error) {
     state.loginBusy = false;
@@ -2177,6 +2271,13 @@ window.addEventListener('popstate', () => {
   }
   state.error = '';
   state.detail = null;
+  if (route() === '/workspace') {
+    state.analytics = null;
+    state.analyticsFunnel = null;
+    state.analyticsRevenue = null;
+    state.analyticsLoaded = false;
+    state.analyticsLoadAttempted = false;
+  }
   render();
 });
 (async function start() {
