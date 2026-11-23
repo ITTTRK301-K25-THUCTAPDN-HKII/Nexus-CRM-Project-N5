@@ -347,8 +347,28 @@ h2, h1, p { margin-top: 0; }
 .funnel-stage-value span { color: #64748b; font-size: 9px; }
 .funnel-excluded { margin: 14px 0 0; padding-top: 12px; border-top: 1px solid #f1f5f9; color: #64748b; font-size: 11px; }
 .funnel-empty, .funnel-loading { display: grid; min-height: 168px; place-items: center; color: #64748b; font-size: 13px; text-align: center; }
+.dashboard-revenue { display: grid; gap: 18px; margin: 20px 0 24px; }
+.revenue-card .funnel-card-heading { grid-template-columns: minmax(0, 1fr) auto; align-items: start; }
+.revenue-legend { display: flex; flex-wrap: wrap; gap: 12px; color: #64748b; font-size: 11px; }
+.revenue-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.revenue-legend i { width: 10px; height: 10px; border-radius: 3px; }
+.revenue-legend-actual { background: #4f46e5; }
+.revenue-legend-target { background: #f59e0b; }
+.revenue-chart-scroll { overflow-x: auto; padding: 4px 0 8px; }
+.revenue-chart { display: grid; grid-template-columns: repeat(var(--revenue-month-count), minmax(42px, 1fr)); gap: 10px; min-width: 0; min-height: 220px; border-bottom: 1px solid #e2e8f0; }
+.revenue-month-column { display: grid; grid-template-rows: minmax(150px, 1fr) auto; justify-items: center; gap: 8px; }
+.revenue-bars { display: flex; align-items: end; justify-content: center; gap: 6px; width: 100%; height: 100%; min-height: 150px; border-bottom: 1px dashed #e2e8f0; background: repeating-linear-gradient(to top, transparent 0, transparent 37px, #f1f5f9 38px, transparent 39px); }
+.revenue-bar { width: min(28px, 38%); min-height: 0; border-radius: 5px 5px 0 0; transition: height .2s ease; }
+.revenue-bar-actual { background: #4f46e5; }
+.revenue-bar-target { background: #f59e0b; }
+.revenue-month-label { color: #64748b; font-size: 10px; white-space: nowrap; }
+.revenue-chart-empty .revenue-bars { background: repeating-linear-gradient(to top, transparent 0, transparent 37px, #f1f5f9 38px, transparent 39px); }
+.revenue-target-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(135px, 1fr)); gap: 10px; margin-top: 16px; }
+.revenue-target-input { display: grid; gap: 5px; color: #64748b; font-size: 10px; font-weight: 700; }
+.revenue-target-input input { width: 100%; min-width: 0; min-height: 35px; padding: 6px 9px; border: 1px solid #dbe3f0; border-radius: 7px; color: #334155; font: inherit; font-size: 12px; }
+.revenue-target-input input:focus { border-color: #6366f1; outline: 2px solid #e0e7ff; }
 @media (max-width: 980px) { .dashboard-funnels { grid-template-columns: 1fr; } }
-@media (max-width: 520px) { .funnel-card { padding: 16px; } .funnel-stage { grid-template-columns: minmax(66px, 1fr) minmax(54px, 1.2fr) minmax(58px, .8fr); gap: 5px; } }
+@media (max-width: 520px) { .funnel-card { padding: 16px; } .funnel-stage { grid-template-columns: minmax(66px, 1fr) minmax(54px, 1.2fr) minmax(58px, .8fr); gap: 5px; } .revenue-card .funnel-card-heading { grid-template-columns: 1fr; } .revenue-chart { min-width: max(100%, calc(var(--revenue-month-count) * 58px)); } }
 
 /* 4. Modern Form Card */
 .modern-form-card {

@@ -104,6 +104,47 @@ class SalesAnalyticsApiTests(unittest.TestCase):
                 (date(2026, 3, 1), date(2026, 4, 1)),
             )
 
+    def test_monthly_revenue_uses_close_date_currency_and_role_scope(self):
+        manager = self.authenticate(role="Manager", user_id=3)
+        rows = [
+            {"month": "2026-01", "currency": "USD", "actual": Decimal("1200.50")},
+            {"month": "2026-02", "currency": "VND", "actual": Decimal("3000000.00")},
+        ]
+        with patch.object(api, "get_user", return_value=manager), patch.object(
+            api, "query", return_value=rows
+        ) as query:
+            response = self.client.get(
+                "/api/analytics/revenue-by-month?from=2026-01-01&to=2026-02-28"
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json["monthlyRevenue"], [
+            {"month": "2026-01", "currency": "USD", "actual": 1200.5},
+            {"month": "2026-02", "currency": "VND", "actual": 3000000.0},
+        ])
+        sql, values = query.call_args.args
+        self.assertIn("d.stage='WON'", sql)
+        self.assertIn("d.closed_date >= %s", sql)
+        self.assertIn("d.closed_date < %s", sql)
+        self.assertIn("d.owner_user_id IN (SELECT id FROM users WHERE role='Sale')", sql)
+        self.assertIn("GROUP BY DATE_FORMAT(d.closed_date", sql)
+        self.assertEqual(values, (date(2026, 1, 1), date(2026, 3, 1)))
+
+    def test_monthly_revenue_validates_filters_and_requires_authentication(self):
+        self.authenticate()
+        sale = {"id": 8, "role": "Sale", "status": "ACTIVE"}
+        with patch.object(api, "get_user", return_value=sale), patch.object(
+            api, "query"
+        ) as query:
+            invalid = self.client.get("/api/analytics/revenue-by-month?from=2026-02-30")
+            unknown_filter = self.client.get("/api/analytics/revenue-by-month?currency=USD")
+            self.assertEqual(invalid.status_code, 400)
+            self.assertEqual(unknown_filter.status_code, 400)
+            query.assert_not_called()
+
+        self.client.delete_cookie("nexus_access")
+        self.assertEqual(self.client.get("/api/analytics/revenue-by-month").status_code, 401)
+
     def test_funnel_returns_all_lead_and_deal_stages_with_rates(self):
         sale = self.authenticate()
         deal_rows = [
