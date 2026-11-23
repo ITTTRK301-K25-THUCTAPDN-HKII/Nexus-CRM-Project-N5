@@ -908,13 +908,16 @@ def monthly_revenue_report():
     except ValueError as error:
         return json_error(str(error), 400)
 
-    filters = ["d.stage='WON'", "d.closed_date IS NOT NULL"]
+    # Older WON deals may predate closed_date. Use their last update date as
+    # a fallback so historical/imported wins still appear in the revenue chart.
+    close_date_expr = "COALESCE(d.closed_date,DATE(d.updated_at),DATE(d.created_at))"
+    filters = ["d.stage='WON'"]
     values = []
     if period["from"]:
-        filters.append("d.closed_date >= %s")
+        filters.append(f"{close_date_expr} >= %s")
         values.append(period["from"])
     if period["to"]:
-        filters.append("d.closed_date < %s")
+        filters.append(f"{close_date_expr} < %s")
         values.append(period["to"] + timedelta(days=1))
     scope_sql, scope_values = deal_scope(g.user, "d.owner_user_id")
     if scope_sql:
@@ -922,10 +925,10 @@ def monthly_revenue_report():
         values.extend(scope_values)
 
     rows = query(
-        "SELECT DATE_FORMAT(d.closed_date,'%%Y-%%m') AS month,d.currency,"
+        f"SELECT DATE_FORMAT({close_date_expr},'%%Y-%%m') AS month,d.currency,"
         "COALESCE(SUM(COALESCE(d.closed_amount,d.amount)),0) AS actual "
         "FROM deals d WHERE " + " AND ".join(filters) +
-        " GROUP BY DATE_FORMAT(d.closed_date,'%%Y-%%m'),d.currency ORDER BY month,d.currency",
+        f" GROUP BY DATE_FORMAT({close_date_expr},'%%Y-%%m'),d.currency ORDER BY month,d.currency",
         tuple(values),
     )
     return jsonify({

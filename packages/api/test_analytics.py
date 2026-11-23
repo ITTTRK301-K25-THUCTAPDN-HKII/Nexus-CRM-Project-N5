@@ -124,10 +124,11 @@ class SalesAnalyticsApiTests(unittest.TestCase):
         ])
         sql, values = query.call_args.args
         self.assertIn("d.stage='WON'", sql)
-        self.assertIn("d.closed_date >= %s", sql)
-        self.assertIn("d.closed_date < %s", sql)
+        self.assertIn("COALESCE(d.closed_date,DATE(d.updated_at),DATE(d.created_at)) >= %s", sql)
+        self.assertIn("COALESCE(d.closed_date,DATE(d.updated_at),DATE(d.created_at)) < %s", sql)
         self.assertIn("d.owner_user_id IN (SELECT id FROM users WHERE role='Sale')", sql)
-        self.assertIn("GROUP BY DATE_FORMAT(d.closed_date", sql)
+        self.assertIn("GROUP BY DATE_FORMAT(COALESCE(d.closed_date,DATE(d.updated_at),DATE(d.created_at))", sql)
+        self.assertIn("COALESCE(d.closed_amount,d.amount)", sql)
         self.assertEqual(values, (date(2026, 1, 1), date(2026, 3, 1)))
 
     def test_monthly_revenue_validates_filters_and_requires_authentication(self):
