@@ -6,6 +6,7 @@ const state = {
   notice: '',
   users: [],
   analytics: null,
+  analyticsFunnel: null,
   analyticsRange: 'month',
   analyticsLoaded: false,
   analyticsLoadAttempted: false,
@@ -289,6 +290,42 @@ function dashboardPeriodRange(range = 'month', now = new Date()) {
   const toDateKey = (value) => `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
   return { from: toDateKey(start), to: toDateKey(end) };
 }
+function funnelChartMarkup({ title, description, stages, excludedStages = [] }) {
+  const usableStages = stages || [];
+  const maxCount = Math.max(0, ...usableStages.map((stage) => Number(stage.count || 0)));
+  let largestDrop = null;
+  for (let index = 1; index < usableStages.length; index += 1) {
+    const previous = Number(usableStages[index - 1].count || 0);
+    const current = Number(usableStages[index].count || 0);
+    const dropPercent = previous > 0 ? Math.max(0, (previous - current) * 100 / previous) : 0;
+    if (dropPercent > 0 && (!largestDrop || dropPercent > largestDrop.percent)) {
+      largestDrop = { label: usableStages[index].label, percent: dropPercent };
+    }
+  }
+  const stagesMarkup = usableStages.map((stage, index) => {
+    const count = Number(stage.count || 0);
+    const previousCount = index ? Number(usableStages[index - 1].count || 0) : maxCount;
+    const topWidth = maxCount ? previousCount / maxCount * 100 : 0;
+    const bottomWidth = maxCount ? count / maxCount * 100 : 0;
+    const topInset = (100 - topWidth) / 2;
+    const bottomInset = (100 - bottomWidth) / 2;
+    const drop = index && previousCount > count && previousCount > 0
+      ? `${((previousCount - count) * 100 / previousCount).toLocaleString('vi-VN', { maximumFractionDigits: 1 })}% giảm` : '';
+    return `<div class="funnel-stage ${drop ? 'has-drop' : ''}">
+      <div class="funnel-stage-label"><strong>${escapeHtml(stage.label)}</strong>${drop ? `<span>${drop}</span>` : ''}</div>
+      <svg class="funnel-stage-shape" viewBox="0 0 100 36" role="img" aria-label="${escapeHtml(stage.label)}: ${count.toLocaleString('vi-VN')}">
+        <polygon points="${topInset},0 ${100 - topInset},0 ${100 - bottomInset},36 ${bottomInset},36" />
+      </svg>
+      <div class="funnel-stage-value"><strong>${count.toLocaleString('vi-VN')}</strong><span>${Number(stage.sharePercent || 0).toLocaleString('vi-VN')}% tổng</span></div>
+    </div>`;
+  }).join('');
+  const excludedMarkup = excludedStages.length ? `<p class="funnel-excluded">Ngoài luồng chính: ${excludedStages.map((stage) => `${escapeHtml(stage.label)} ${Number(stage.count || 0).toLocaleString('vi-VN')}`).join(' · ')}</p>` : '';
+  const bottleneck = largestDrop
+    ? `Giảm mạnh nhất: ${escapeHtml(largestDrop.label)} (${largestDrop.percent.toLocaleString('vi-VN', { maximumFractionDigits: 1 })}%)`
+    : 'Chưa ghi nhận điểm giảm giữa các giai đoạn';
+  return `<article class="funnel-card"><header class="funnel-card-heading"><div><h3>${escapeHtml(title)}</h3><p>${escapeHtml(description)}</p></div><span class="funnel-bottleneck">${bottleneck}</span></header>
+    ${maxCount ? `<div class="funnel-chart" role="list" aria-label="${escapeHtml(title)}">${stagesMarkup}</div>${excludedMarkup}` : '<div class="funnel-empty">Chưa có dữ liệu trong khoảng thời gian này.</div>'}</article>`;
+}
 function workspacePage() {
   const analytics = state.analytics;
   const moneyByCurrency = (key) => (analytics?.revenueByCurrency || []).map((item) =>
@@ -312,6 +349,20 @@ function workspacePage() {
       <article class="kpi-card"><div class="kpi-info"><span class="kpi-label">Tỷ lệ Win</span><strong class="kpi-value text-emerald">${unavailable ? '—' : `${Number(analytics.deals.winRate || 0).toLocaleString('vi-VN')}%`}</strong><span class="kpi-hint">Deal WON / (WON + LOST)</span></div><div class="kpi-icon-wrap emerald-wrap" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m5 12 4 4L19 6"/><circle cx="12" cy="12" r="10"/></svg></div></article>
       <article class="kpi-card dashboard-currency-card"><div class="kpi-info"><span class="kpi-label">Doanh số Won</span>${unavailable ? '<strong class="kpi-value">—</strong>' : moneyByCurrency('wonValue')}<span class="kpi-hint">Giá trị Deal đã chốt thành công</span></div><div class="kpi-icon-wrap indigo-wrap" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20m5-16H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></div></article>
       <article class="kpi-card dashboard-currency-card"><div class="kpi-info"><span class="kpi-label">Pipeline Value</span>${unavailable ? '<strong class="kpi-value">—</strong>' : moneyByCurrency('pipelineValue')}<span class="kpi-hint">Tổng giá trị Deal đang mở</span></div><div class="kpi-icon-wrap rose-wrap" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18M7 14l4-4 4 4 6-7"/></svg></div></article>
+    </section>
+    <section class="dashboard-funnels" aria-label="Phân tích phễu bán hàng">
+      ${state.analyticsFunnel ? funnelChartMarkup({
+        title: 'Phễu chuyển đổi Lead',
+        description: 'Số Lead theo trạng thái hiện tại trong khoảng thời gian đã chọn.',
+        stages: state.analyticsFunnel.leadFunnel.filter((stage) => stage.status !== 'UNQUALIFIED'),
+        excludedStages: state.analyticsFunnel.leadFunnel.filter((stage) => stage.status === 'UNQUALIFIED'),
+      }) : `<article class="funnel-card funnel-loading">${state.analyticsLoading ? 'Đang tải phễu Lead…' : 'Không thể tải dữ liệu phễu Lead.'}</article>`}
+      ${state.analyticsFunnel ? funnelChartMarkup({
+        title: 'Phễu chuyển đổi Deal',
+        description: 'Số Deal theo giai đoạn, lọc theo ngày tạo.',
+        stages: state.analyticsFunnel.dealFunnel.filter((stage) => stage.stage !== 'LOST'),
+        excludedStages: state.analyticsFunnel.dealFunnel.filter((stage) => stage.stage === 'LOST'),
+      }) : `<article class="funnel-card funnel-loading">${state.analyticsLoading ? 'Đang tải phễu Deal…' : 'Không thể tải dữ liệu phễu Deal.'}</article>`}
     </section>
     ${!loading && !state.analyticsLoading && state.analyticsLoaded && !state.error ? `<p class="dashboard-updated muted small">${rangeLabel} · ${escapeHtml(analytics.period?.from || '')} – ${escapeHtml(analytics.period?.to || '')}</p>` : ''}
   </main></div>`;
@@ -1222,7 +1273,13 @@ async function loadAnalytics(force = false) {
   if (route() === '/workspace') render();
   try {
     const period = dashboardPeriodRange(state.analyticsRange);
-    state.analytics = await api(`/analytics/kpis?from=${period.from}&to=${period.to}`);
+    const query = `from=${period.from}&to=${period.to}`;
+    const [analytics, analyticsFunnel] = await Promise.all([
+      api(`/analytics/kpis?${query}`),
+      api(`/analytics/funnel?${query}`),
+    ]);
+    state.analytics = analytics;
+    state.analyticsFunnel = analyticsFunnel;
     state.analyticsLoaded = true;
     state.error = '';
   } catch (error) {
@@ -1825,6 +1882,7 @@ root.addEventListener('change', async (event) => {
     if (!['month', 'quarter', 'year'].includes(input.value) || state.analyticsLoading) return;
     state.analyticsRange = input.value;
     state.analytics = null;
+    state.analyticsFunnel = null;
     state.analyticsLoaded = false;
     state.analyticsLoadAttempted = false;
     state.error = '';
