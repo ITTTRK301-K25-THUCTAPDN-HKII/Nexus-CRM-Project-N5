@@ -1,4 +1,4 @@
--- Nexus CRM: MySQL 8.0 schema (16 tables)
+-- Nexus CRM: MySQL 8.0 schema (20 tables)
 -- Run this whole file in MySQL Workbench (Query > Execute All).
 CREATE DATABASE IF NOT EXISTS nexus_crm
   CHARACTER SET utf8mb4

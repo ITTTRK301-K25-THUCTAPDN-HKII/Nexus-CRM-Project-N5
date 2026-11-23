@@ -13,6 +13,9 @@ Node.js and npm are not required to run this version of the project. The Deal bo
 
 ## 1. Prepare MySQL
 
+The database entity relationship diagram is available in
+[`docs/ERD.md`](docs/ERD.md).
+
 1. Start MySQL Server and connect to it with MySQL Workbench or another MySQL
    client.
 2. Open `packages/api/sql/schema.mysql.sql` and execute the whole script. It
