@@ -329,6 +329,26 @@ h2, h1, p { margin-top: 0; }
 .dashboard-money-row small { color: #64748b; font-size: 11px; font-weight: 700; }
 .dashboard-empty-value { font-size: 16px; font-weight: 700; color: #64748b; }
 .dashboard-updated { text-align: right; }
+.dashboard-funnels { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin: 20px 0 24px; }
+.funnel-card { min-width: 0; padding: 22px; border: 1px solid #e2e8f0; border-radius: 16px; background: #fff; box-shadow: 0 4px 24px -4px rgba(11, 15, 25, 0.05); }
+.funnel-card-heading { display: grid; gap: 12px; margin-bottom: 18px; }
+.funnel-card-heading h3 { margin: 0; color: #0f172a; font-size: 16px; }
+.funnel-card-heading p { margin: 5px 0 0; color: #64748b; font-size: 12px; line-height: 1.5; }
+.funnel-bottleneck { justify-self: start; padding: 6px 9px; border-radius: 8px; background: #fff7ed; color: #c2410c; font-size: 11px; font-weight: 700; }
+.funnel-chart { display: grid; gap: 4px; }
+.funnel-stage { display: grid; grid-template-columns: minmax(74px, 1fr) minmax(65px, 1.5fr) minmax(66px, .8fr); align-items: center; gap: 8px; min-height: 43px; }
+.funnel-stage-label { display: grid; gap: 2px; color: #334155; font-size: 11px; }
+.funnel-stage-label span { color: #ea580c; font-size: 9px; font-weight: 700; }
+.funnel-stage-shape { display: block; width: 100%; height: 32px; overflow: visible; }
+.funnel-stage-shape polygon { fill: #6366f1; }
+.funnel-stage:nth-child(2n) .funnel-stage-shape polygon { fill: #818cf8; }
+.funnel-stage.has-drop .funnel-stage-shape polygon { fill: #f59e0b; }
+.funnel-stage-value { display: grid; justify-items: end; color: #0f172a; font-size: 12px; }
+.funnel-stage-value span { color: #64748b; font-size: 9px; }
+.funnel-excluded { margin: 14px 0 0; padding-top: 12px; border-top: 1px solid #f1f5f9; color: #64748b; font-size: 11px; }
+.funnel-empty, .funnel-loading { display: grid; min-height: 168px; place-items: center; color: #64748b; font-size: 13px; text-align: center; }
+@media (max-width: 980px) { .dashboard-funnels { grid-template-columns: 1fr; } }
+@media (max-width: 520px) { .funnel-card { padding: 16px; } .funnel-stage { grid-template-columns: minmax(66px, 1fr) minmax(54px, 1.2fr) minmax(58px, .8fr); gap: 5px; } }
 
 /* 4. Modern Form Card */
 .modern-form-card {
