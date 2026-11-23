@@ -156,6 +156,52 @@ class SalesAnalyticsApiTests(unittest.TestCase):
             with self.subTest(endpoint=endpoint):
                 self.assertEqual(self.client.get(endpoint).status_code, 401)
 
+    def test_revenue_trend_returns_all_months_and_keeps_currency_separate(self):
+        sale = self.authenticate()
+        with patch.object(api, "get_user", return_value=sale), patch.object(
+            api, "query", return_value=[
+                {"month": 1, "currency": "USD", "actual": Decimal("120.50")},
+                {"month": 12, "currency": "VND", "actual": Decimal("900000")},
+            ]
+        ) as query:
+            response = self.client.get("/api/analytics/revenue-trend?year=2026")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json["year"], 2026)
+        self.assertEqual(len(response.json["months"]), 12)
+        self.assertEqual(response.json["months"][0], {
+            "month": "2026-01", "actualByCurrency": [{"currency": "USD", "actual": 120.5}],
+        })
+        self.assertEqual(response.json["months"][5], {
+            "month": "2026-06", "actualByCurrency": [],
+        })
+        self.assertEqual(response.json["months"][11], {
+            "month": "2026-12", "actualByCurrency": [{"currency": "VND", "actual": 900000}],
+        })
+        sql, values = query.call_args.args
+        self.assertIn("d.stage='WON'", sql)
+        self.assertIn("d.closed_date >= %s", sql)
+        self.assertIn("d.closed_date < %s", sql)
+        self.assertIn("d.owner_user_id = %s", sql)
+        self.assertEqual(values, (sale["id"], date(2026, 1, 1), date(2027, 1, 1)))
+
+    def test_revenue_trend_validates_year_and_requires_authentication(self):
+        self.authenticate()
+        sale = {"id": 8, "role": "Sale", "status": "ACTIVE"}
+        with patch.object(api, "get_user", return_value=sale), patch.object(
+            api, "query"
+        ) as query:
+            malformed = self.client.get("/api/analytics/revenue-trend?year=26")
+            unsupported = self.client.get("/api/analytics/revenue-trend?year=2026&currency=USD")
+            out_of_range = self.client.get("/api/analytics/revenue-trend?year=9999")
+
+        self.assertEqual(malformed.status_code, 400)
+        self.assertEqual(unsupported.status_code, 400)
+        self.assertEqual(out_of_range.status_code, 400)
+        query.assert_not_called()
+        self.client.delete_cookie("nexus_access")
+        self.assertEqual(self.client.get("/api/analytics/revenue-trend").status_code, 401)
+
     def test_sales_performance_groups_results_and_filters_by_requested_quarter(self):
         manager = self.authenticate(role="Manager", user_id=3)
         deal_rows = [

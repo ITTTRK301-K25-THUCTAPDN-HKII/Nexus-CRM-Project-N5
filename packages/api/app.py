@@ -899,6 +899,47 @@ def sales_kpis():
     })
 
 
+@app.get("/api/analytics/revenue-trend")
+@auth_required
+def sales_revenue_trend():
+    """Return WON deal value by close month and currency for one calendar year."""
+    if set(request.args) - {"year"}:
+        return json_error("Chỉ chấp nhận tham số year theo định dạng YYYY.", 400)
+    raw_year = request.args.get("year", str(date.today().year))
+    if not re.fullmatch(r"\d{4}", raw_year):
+        return json_error("year cần theo định dạng YYYY.", 400)
+    year = int(raw_year)
+    if not 1000 <= year <= 9998:
+        return json_error("year cần nằm trong khoảng 1000 đến 9998.", 400)
+
+    scope_sql, scope_values = deal_scope(g.user, "d.owner_user_id")
+    filters = [
+        "d.stage='WON'",
+        "d.closed_date >= %s",
+        "d.closed_date < %s",
+    ]
+    if scope_sql:
+        filters.insert(0, scope_sql)
+    rows = query(
+        "SELECT MONTH(d.closed_date) AS month,d.currency,"
+        "COALESCE(SUM(COALESCE(d.closed_amount,d.amount)),0) AS actual "
+        "FROM deals d WHERE " + " AND ".join(filters) +
+        " GROUP BY MONTH(d.closed_date),d.currency ORDER BY MONTH(d.closed_date),d.currency",
+        tuple(scope_values + [date(year, 1, 1), date(year + 1, 1, 1)]),
+    )
+
+    months = [
+        {"month": f"{year}-{month:02d}", "actualByCurrency": []}
+        for month in range(1, 13)
+    ]
+    for row in rows:
+        months[int(row["month"]) - 1]["actualByCurrency"].append({
+            "currency": row["currency"],
+            "actual": row["actual"] or 0,
+        })
+    return jsonify({"year": year, "months": months})
+
+
 @app.get("/api/analytics/sales-performance")
 @roles_required("Admin", "Manager")
 def sales_performance_report():

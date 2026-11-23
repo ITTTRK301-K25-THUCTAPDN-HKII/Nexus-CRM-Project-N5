@@ -10,6 +10,11 @@ const state = {
   analyticsLoaded: false,
   analyticsLoadAttempted: false,
   analyticsLoading: false,
+  revenueTrend: null,
+  revenueTrendYear: new Date().getFullYear(),
+  revenueTrendCurrency: '',
+  revenueTrendLoading: false,
+  revenueTrendLoadAttempted: false,
   deals: [],
   dealsLoaded: false,
   quotes: [],
@@ -289,6 +294,69 @@ function dashboardPeriodRange(range = 'month', now = new Date()) {
   const toDateKey = (value) => `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
   return { from: toDateKey(start), to: toDateKey(end) };
 }
+function revenueTargetStorageKey(year, currency) {
+  return `nexus-revenue-target:${year}:${currency}`;
+}
+function revenueTargetValue() {
+  try {
+    const saved = localStorage.getItem(revenueTargetStorageKey(
+      state.revenueTrendYear, state.revenueTrendCurrency,
+    ));
+    return saved && Number.isFinite(Number(saved)) ? Math.max(0, Number(saved)) : 0;
+  } catch {
+    return 0;
+  }
+}
+function renderRevenueChart() {
+  const months = state.revenueTrend?.months || [];
+  const currencies = [...new Set(months.flatMap((month) =>
+    month.actualByCurrency.map((item) => item.currency)))].sort();
+  const currency = currencies.includes(state.revenueTrendCurrency)
+    ? state.revenueTrendCurrency : (currencies[0] || 'VND');
+  state.revenueTrendCurrency = currency;
+  const target = revenueTargetValue();
+  const values = months.map((month) => Number(
+    month.actualByCurrency.find((item) => item.currency === currency)?.actual || 0,
+  ));
+  const maxValue = Math.max(target, ...values, 1);
+  const chart = { width: 1000, height: 320, left: 76, right: 24, top: 25, bottom: 48 };
+  const plotWidth = chart.width - chart.left - chart.right;
+  const plotHeight = chart.height - chart.top - chart.bottom;
+  const baseline = chart.top + plotHeight;
+  const y = (value) => baseline - (value / maxValue) * plotHeight;
+  const groupWidth = plotWidth / 12;
+  const barWidth = groupWidth * 0.48;
+  const money = (value) => new Intl.NumberFormat('vi-VN', {
+    maximumFractionDigits: 2,
+  }).format(value);
+  const grid = Array.from({ length: 5 }, (_, index) => {
+    const value = maxValue * (4 - index) / 4;
+    const lineY = y(value);
+    return `<g><line x1="${chart.left}" y1="${lineY}" x2="${chart.width - chart.right}" y2="${lineY}" class="revenue-grid-line"/><text x="${chart.left - 10}" y="${lineY + 4}" text-anchor="end" class="revenue-axis-label">${escapeHtml(money(value))}</text></g>`;
+  }).join('');
+  const bars = values.map((value, index) => {
+    const x = chart.left + groupWidth * index + (groupWidth - barWidth) / 2;
+    const top = y(value);
+    const height = Math.max(0, baseline - top);
+    const monthLabel = `${String(index + 1).padStart(2, '0')}/${state.revenueTrendYear}`;
+    return `<g><rect x="${x}" y="${top}" width="${barWidth}" height="${height}" rx="5" class="revenue-actual-bar"><title>${monthLabel}: ${money(value)} ${escapeHtml(currency)}</title></rect><text x="${x + barWidth / 2}" y="${baseline + 25}" text-anchor="middle" class="revenue-axis-label">T${index + 1}</text></g>`;
+  }).join('');
+  const targetLine = target > 0
+    ? `<line x1="${chart.left}" y1="${y(target)}" x2="${chart.width - chart.right}" y2="${y(target)}" class="revenue-target-line"><title>Chỉ tiêu: ${money(target)} ${escapeHtml(currency)}/tháng</title></line>`
+    : '';
+  const options = (currencies.length ? currencies : ['VND']).map((item) =>
+    `<option value="${escapeHtml(item)}" ${item === currency ? 'selected' : ''}>${escapeHtml(item)}</option>`
+  ).join('');
+  const status = state.revenueTrendLoading ? '<p class="revenue-chart-status">Đang tải dữ liệu doanh thu...</p>'
+    : state.revenueTrend ? '' : '<p class="revenue-chart-status">Chưa tải được dữ liệu doanh thu.</p>';
+  return `<section class="revenue-chart-card" aria-labelledby="revenue-chart-title">
+    <div class="revenue-chart-heading"><div><span class="eyebrow">DOANH THU THEO THÁNG</span><h2 id="revenue-chart-title">Thực tế vs. chỉ tiêu</h2><p>Thực tế là giá trị Deal WON theo ngày chốt hợp đồng.</p></div>
+      <div class="revenue-chart-controls"><label for="revenue-chart-year">Năm<select id="revenue-chart-year" data-input="revenue-year">${[0, 1, 2, 3, 4].map((offset) => { const year = new Date().getFullYear() - offset; return `<option value="${year}" ${year === state.revenueTrendYear ? 'selected' : ''}>${year}</option>`; }).join('')}</select></label>
+      <label for="revenue-chart-currency">Loại tiền<select id="revenue-chart-currency" data-input="revenue-currency">${options}</select></label>
+      <label for="revenue-month-target">Chỉ tiêu/tháng<input id="revenue-month-target" data-input="revenue-target" type="number" min="0" step="any" value="${target || ''}" placeholder="Nhập chỉ tiêu"></label></div></div>
+    ${status}${state.revenueTrend ? `<div class="revenue-chart-wrap"><svg class="revenue-chart" viewBox="0 0 ${chart.width} ${chart.height}" role="img" aria-label="Biểu đồ cột doanh thu thực tế và đường chỉ tiêu theo từng tháng năm ${state.revenueTrendYear}, đơn vị ${escapeHtml(currency)}">${grid}${bars}${targetLine}</svg></div>
+    <div class="revenue-chart-legend"><span><i class="revenue-legend-actual"></i>Thực tế</span><span><i class="revenue-legend-target"></i>Chỉ tiêu mỗi tháng</span><small>Chỉ tiêu được lưu trên trình duyệt này theo năm và loại tiền.</small></div>` : ''}</section>`;
+}
 function workspacePage() {
   const analytics = state.analytics;
   const moneyByCurrency = (key) => (analytics?.revenueByCurrency || []).map((item) =>
@@ -313,6 +381,7 @@ function workspacePage() {
       <article class="kpi-card dashboard-currency-card"><div class="kpi-info"><span class="kpi-label">Doanh số Won</span>${unavailable ? '<strong class="kpi-value">—</strong>' : moneyByCurrency('wonValue')}<span class="kpi-hint">Giá trị Deal đã chốt thành công</span></div><div class="kpi-icon-wrap indigo-wrap" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20m5-16H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></div></article>
       <article class="kpi-card dashboard-currency-card"><div class="kpi-info"><span class="kpi-label">Pipeline Value</span>${unavailable ? '<strong class="kpi-value">—</strong>' : moneyByCurrency('pipelineValue')}<span class="kpi-hint">Tổng giá trị Deal đang mở</span></div><div class="kpi-icon-wrap rose-wrap" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 3v18h18M7 14l4-4 4 4 6-7"/></svg></div></article>
     </section>
+    ${renderRevenueChart()}
     ${!loading && !state.analyticsLoading && state.analyticsLoaded && !state.error ? `<p class="dashboard-updated muted small">${rangeLabel} · ${escapeHtml(analytics.period?.from || '')} – ${escapeHtml(analytics.period?.to || '')}</p>` : ''}
   </main></div>`;
 }
@@ -1232,6 +1301,21 @@ async function loadAnalytics(force = false) {
     if (route() === '/workspace') render();
   }
 }
+async function loadRevenueTrend() {
+  if (state.revenueTrendLoading || state.revenueTrendLoadAttempted) return;
+  state.revenueTrendLoading = true;
+  state.revenueTrendLoadAttempted = true;
+  if (route() === '/workspace') render();
+  try {
+    state.revenueTrend = await api(`/analytics/revenue-trend?year=${state.revenueTrendYear}`);
+    state.error = '';
+  } catch (error) {
+    state.error = error.message;
+  } finally {
+    state.revenueTrendLoading = false;
+    if (route() === '/workspace') render();
+  }
+}
 // Lấy Deal từ API một lần khi mở board, sau đó render lại để đổ card vào cột.
 async function loadDeals() {
   try {
@@ -1439,6 +1523,7 @@ function render() {
   } else if (path === '/workspace') {
     root.innerHTML = workspacePage();
     if (!state.analyticsLoadAttempted && !state.analyticsLoading) void loadAnalytics();
+    if (!state.revenueTrend && !state.revenueTrendLoading && !state.revenueTrendLoadAttempted) void loadRevenueTrend();
   }
   else navigate(state.user?.role === 'Admin' ? '/admin/users' : '/workspace', true);
 }
@@ -1466,6 +1551,9 @@ root.addEventListener('click', async (event) => {
     case 'refresh-analytics':
       state.error = '';
       void loadAnalytics(true);
+      state.revenueTrend = null;
+      state.revenueTrendLoadAttempted = false;
+      void loadRevenueTrend();
       break;
     case 'logout':
       try { await api('/auth/logout', { method: 'POST' }); } catch (error) { console.error(error); }
@@ -1830,6 +1918,32 @@ root.addEventListener('change', async (event) => {
     state.error = '';
     render();
     void loadAnalytics(true);
+  } else if (input.dataset.input === 'revenue-year') {
+    const year = Number(input.value);
+    if (!Number.isInteger(year) || year < 1000 || year > 9998 || state.revenueTrendLoading) return;
+    state.revenueTrendYear = year;
+    state.revenueTrend = null;
+    state.revenueTrendLoadAttempted = false;
+    render();
+  } else if (input.dataset.input === 'revenue-currency') {
+    state.revenueTrendCurrency = input.value;
+    render();
+  } else if (input.dataset.input === 'revenue-target') {
+    const value = Number(input.value);
+    if (input.value !== '' && Number.isFinite(value) && value >= 0) {
+      try {
+        localStorage.setItem(revenueTargetStorageKey(state.revenueTrendYear, state.revenueTrendCurrency), String(value));
+      } catch {
+        state.notice = 'Không thể lưu chỉ tiêu trên trình duyệt này.';
+      }
+    } else if (input.value === '') {
+      try {
+        localStorage.removeItem(revenueTargetStorageKey(state.revenueTrendYear, state.revenueTrendCurrency));
+      } catch {
+        state.notice = 'Không thể cập nhật chỉ tiêu trên trình duyệt này.';
+      }
+    }
+    render();
   } else if (input.dataset.input === 'deal-owner') {
     state.dealOwnerSelected = input.value;
     render();

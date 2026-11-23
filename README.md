@@ -77,6 +77,13 @@ ownership scope. KPI and funnel values are reported separately per currency;
 deal win rate is won deals divided by closed (won or lost) deals, while lead
 conversion rate is converted leads divided by active leads.
 
+The dashboard's monthly revenue chart uses
+`GET /api/analytics/revenue-trend?year=2026`. It groups WON Deal `closed_amount`
+(falling back to `amount`) by `closed_date`, applies the caller's Deal ownership
+scope, and keeps currencies separate. Monthly targets are entered on the
+dashboard and saved in that browser by year and currency; target settings are
+not shared across users or devices.
+
 Managers and Admins can request per-Sale performance with
 `GET /api/analytics/sales-performance?period=month&date=2026-11-20`. Supported
 periods are `day`, `week` (Monday through Sunday), `month`, and `quarter`; `date`
