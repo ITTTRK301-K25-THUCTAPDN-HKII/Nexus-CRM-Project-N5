@@ -53,6 +53,9 @@ Node.js and npm are not required to run this version of the project. The Deal bo
     assignee/due-date indexes. New databases receive these indexes from
     `schema.mysql.sql`. Lead phone, Lead status, Deal stage, and Task reminder
     indexes already exist and are not duplicated.
+12. For an existing database, run
+    `packages/api/sql/migrations/012_monthly_revenue_targets.sql` once. New
+    databases include the target table in `schema.mysql.sql`.
 
 ## 2. Configure the database connection
 
@@ -80,9 +83,10 @@ conversion rate is converted leads divided by active leads.
 The dashboard's monthly revenue chart uses
 `GET /api/analytics/revenue-trend?year=2026`. It groups WON Deal `closed_amount`
 (falling back to `amount`) by `closed_date`, applies the caller's Deal ownership
-scope, and keeps currencies separate. Monthly targets are entered on the
-dashboard and saved in that browser by year and currency; target settings are
-not shared across users or devices.
+scope, and keeps currencies separate. Managers set their team's target and
+Sales users set their own using `PUT /api/analytics/revenue-targets` with a
+month (`YYYY-MM`), currency and target amount. Targets persist in MySQL per
+user, month and currency, and are shared across that user's devices.
 
 Managers and Admins can request per-Sale performance with
 `GET /api/analytics/sales-performance?period=month&date=2026-11-20`. Supported

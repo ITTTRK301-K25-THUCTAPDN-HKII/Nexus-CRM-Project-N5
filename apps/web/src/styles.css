@@ -351,12 +351,18 @@ h2, h1, p { margin-top: 0; }
 .revenue-legend-target { height: 0 !important; border-top: 2px dashed #e39a34; border-radius: 0 !important; }
 .revenue-chart-legend small { margin-left: auto; color: #97a1b1; }
 .revenue-chart-status { margin: 18px 0 4px; color: #8591a5; font-size: 12px; }
+.revenue-target-form { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 12px; margin-top: 17px; padding-top: 15px; border-top: 1px solid #edf1f6; }
+.revenue-target-form > strong { align-self: center; margin-right: auto; color: #334155; font-size: 12px; }
+.revenue-target-form label { display: grid; gap: 5px; color: #64748b; font-size: 10px; font-weight: 700; }
+.revenue-target-form input, .revenue-target-form select { min-width: 120px; min-height: 36px; padding: 6px 9px; border: 1px solid #dbe3f0; border-radius: 8px; background: #fff; color: #334155; font: inherit; font-size: 12px; }
 @media (max-width: 780px) {
   .revenue-chart-heading { flex-direction: column; }
   .revenue-chart-controls { width: 100%; }
   .revenue-chart-controls label { flex: 1; min-width: 100px; }
   .revenue-chart-controls select, .revenue-chart-controls input { width: 100%; }
   .revenue-chart-legend small { flex-basis: 100%; margin-left: 0; }
+  .revenue-target-form { align-items: stretch; flex-direction: column; }
+  .revenue-target-form > strong { align-self: flex-start; }
 }
 
 /* 4. Modern Form Card */

@@ -13,6 +13,7 @@ const state = {
   revenueTrend: null,
   revenueTrendYear: new Date().getFullYear(),
   revenueTrendCurrency: '',
+  revenueTargetMonth: dashboardPeriodRange('month').from.slice(0, 7),
   revenueTrendLoading: false,
   revenueTrendLoadAttempted: false,
   deals: [],
@@ -294,31 +295,25 @@ function dashboardPeriodRange(range = 'month', now = new Date()) {
   const toDateKey = (value) => `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
   return { from: toDateKey(start), to: toDateKey(end) };
 }
-function revenueTargetStorageKey(year, currency) {
-  return `nexus-revenue-target:${year}:${currency}`;
-}
-function revenueTargetValue() {
-  try {
-    const saved = localStorage.getItem(revenueTargetStorageKey(
-      state.revenueTrendYear, state.revenueTrendCurrency,
-    ));
-    return saved && Number.isFinite(Number(saved)) ? Math.max(0, Number(saved)) : 0;
-  } catch {
-    return 0;
-  }
-}
 function renderRevenueChart() {
   const months = state.revenueTrend?.months || [];
-  const currencies = [...new Set(months.flatMap((month) =>
-    month.actualByCurrency.map((item) => item.currency)))].sort();
+  const currencies = [...new Set(['VND', 'USD', ...months.flatMap((month) => [
+    ...month.actualByCurrency.map((item) => item.currency),
+    ...month.targetByCurrency.map((item) => item.currency),
+  ])])].sort();
   const currency = currencies.includes(state.revenueTrendCurrency)
     ? state.revenueTrendCurrency : (currencies[0] || 'VND');
   state.revenueTrendCurrency = currency;
-  const target = revenueTargetValue();
   const values = months.map((month) => Number(
     month.actualByCurrency.find((item) => item.currency === currency)?.actual || 0,
   ));
-  const maxValue = Math.max(target, ...values, 1);
+  const targets = months.map((month) => {
+    const item = month.targetByCurrency.find((entry) => entry.currency === currency);
+    return item ? Number(item.target) : null;
+  });
+  const selectedMonthTarget = months.find((item) => item.month === state.revenueTargetMonth)
+    ?.targetByCurrency.find((item) => item.currency === currency)?.target;
+  const maxValue = Math.max(...targets.filter((value) => value !== null), ...values, 1);
   const chart = { width: 1000, height: 320, left: 76, right: 24, top: 25, bottom: 48 };
   const plotWidth = chart.width - chart.left - chart.right;
   const plotHeight = chart.height - chart.top - chart.bottom;
@@ -341,9 +336,16 @@ function renderRevenueChart() {
     const monthLabel = `${String(index + 1).padStart(2, '0')}/${state.revenueTrendYear}`;
     return `<g><rect x="${x}" y="${top}" width="${barWidth}" height="${height}" rx="5" class="revenue-actual-bar"><title>${monthLabel}: ${money(value)} ${escapeHtml(currency)}</title></rect><text x="${x + barWidth / 2}" y="${baseline + 25}" text-anchor="middle" class="revenue-axis-label">T${index + 1}</text></g>`;
   }).join('');
-  const targetLine = target > 0
-    ? `<line x1="${chart.left}" y1="${y(target)}" x2="${chart.width - chart.right}" y2="${y(target)}" class="revenue-target-line"><title>Chỉ tiêu: ${money(target)} ${escapeHtml(currency)}/tháng</title></line>`
-    : '';
+  const targetPoints = targets.map((value, index) => value === null ? null : {
+    month: index + 1, x: chart.left + groupWidth * (index + 0.5), y: y(value), value,
+  }).filter(Boolean);
+  const targetLine = targetPoints.slice(1).map((point, index) => {
+    const previous = targetPoints[index];
+    return point.month === previous.month + 1
+      ? `<line x1="${previous.x}" y1="${previous.y}" x2="${point.x}" y2="${point.y}" class="revenue-target-line"/>`
+      : '';
+  }).join('');
+  const targetDots = targetPoints.map((point) => `<circle cx="${point.x}" cy="${point.y}" r="4" class="revenue-target-dot"><title>Chỉ tiêu ${String(point.month).padStart(2, '0')}/${state.revenueTrendYear}: ${money(point.value)} ${escapeHtml(currency)}</title></circle>`).join('');
   const options = (currencies.length ? currencies : ['VND']).map((item) =>
     `<option value="${escapeHtml(item)}" ${item === currency ? 'selected' : ''}>${escapeHtml(item)}</option>`
   ).join('');
@@ -352,10 +354,10 @@ function renderRevenueChart() {
   return `<section class="revenue-chart-card" aria-labelledby="revenue-chart-title">
     <div class="revenue-chart-heading"><div><span class="eyebrow">DOANH THU THEO THÁNG</span><h2 id="revenue-chart-title">Thực tế vs. chỉ tiêu</h2><p>Thực tế là giá trị Deal WON theo ngày chốt hợp đồng.</p></div>
       <div class="revenue-chart-controls"><label for="revenue-chart-year">Năm<select id="revenue-chart-year" data-input="revenue-year">${[0, 1, 2, 3, 4].map((offset) => { const year = new Date().getFullYear() - offset; return `<option value="${year}" ${year === state.revenueTrendYear ? 'selected' : ''}>${year}</option>`; }).join('')}</select></label>
-      <label for="revenue-chart-currency">Loại tiền<select id="revenue-chart-currency" data-input="revenue-currency">${options}</select></label>
-      <label for="revenue-month-target">Chỉ tiêu/tháng<input id="revenue-month-target" data-input="revenue-target" type="number" min="0" step="any" value="${target || ''}" placeholder="Nhập chỉ tiêu"></label></div></div>
-    ${status}${state.revenueTrend ? `<div class="revenue-chart-wrap"><svg class="revenue-chart" viewBox="0 0 ${chart.width} ${chart.height}" role="img" aria-label="Biểu đồ cột doanh thu thực tế và đường chỉ tiêu theo từng tháng năm ${state.revenueTrendYear}, đơn vị ${escapeHtml(currency)}">${grid}${bars}${targetLine}</svg></div>
-    <div class="revenue-chart-legend"><span><i class="revenue-legend-actual"></i>Thực tế</span><span><i class="revenue-legend-target"></i>Chỉ tiêu mỗi tháng</span><small>Chỉ tiêu được lưu trên trình duyệt này theo năm và loại tiền.</small></div>` : ''}</section>`;
+      <label for="revenue-chart-currency">Loại tiền<select id="revenue-chart-currency" data-input="revenue-currency">${options}</select></label></div></div>
+    ${status}${state.revenueTrend ? `<div class="revenue-chart-wrap"><svg class="revenue-chart" viewBox="0 0 ${chart.width} ${chart.height}" role="img" aria-label="Biểu đồ cột doanh thu thực tế và đường chỉ tiêu theo từng tháng năm ${state.revenueTrendYear}, đơn vị ${escapeHtml(currency)}">${grid}${bars}${targetLine}${targetDots}</svg></div>
+    <div class="revenue-chart-legend"><span><i class="revenue-legend-actual"></i>Thực tế</span><span><i class="revenue-legend-target"></i>Chỉ tiêu theo tháng</span></div>
+    <form class="revenue-target-form" data-form="revenue-target"><strong>Đặt chỉ tiêu tháng</strong><label for="revenue-target-month">Tháng<input id="revenue-target-month" name="month" type="month" data-input="revenue-target-month" min="${state.revenueTrendYear}-01" max="${state.revenueTrendYear}-12" value="${state.revenueTargetMonth}" required></label><label for="revenue-target-currency">Tiền tệ<select id="revenue-target-currency" name="currency" data-input="revenue-currency">${options}</select></label><label for="revenue-target-amount">Chỉ tiêu<input id="revenue-target-amount" name="targetAmount" type="number" min="0" max="9999999999999.99" step="0.01" value="${selectedMonthTarget ?? ''}" placeholder="Nhập số tiền" required></label><button class="primary-button compact" type="submit" ${state.revenueTrendLoading ? 'disabled' : ''}>Lưu chỉ tiêu</button></form>` : ''}</section>`;
 }
 function workspacePage() {
   const analytics = state.analytics;
@@ -1922,27 +1924,18 @@ root.addEventListener('change', async (event) => {
     const year = Number(input.value);
     if (!Number.isInteger(year) || year < 1000 || year > 9998 || state.revenueTrendLoading) return;
     state.revenueTrendYear = year;
+    state.revenueTargetMonth = year === new Date().getFullYear()
+      ? dashboardPeriodRange('month').from.slice(0, 7) : `${year}-01`;
     state.revenueTrend = null;
     state.revenueTrendLoadAttempted = false;
     render();
   } else if (input.dataset.input === 'revenue-currency') {
     state.revenueTrendCurrency = input.value;
     render();
-  } else if (input.dataset.input === 'revenue-target') {
-    const value = Number(input.value);
-    if (input.value !== '' && Number.isFinite(value) && value >= 0) {
-      try {
-        localStorage.setItem(revenueTargetStorageKey(state.revenueTrendYear, state.revenueTrendCurrency), String(value));
-      } catch {
-        state.notice = 'Không thể lưu chỉ tiêu trên trình duyệt này.';
-      }
-    } else if (input.value === '') {
-      try {
-        localStorage.removeItem(revenueTargetStorageKey(state.revenueTrendYear, state.revenueTrendCurrency));
-      } catch {
-        state.notice = 'Không thể cập nhật chỉ tiêu trên trình duyệt này.';
-      }
-    }
+  } else if (input.dataset.input === 'revenue-target-month') {
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(input.value)
+      || !input.value.startsWith(`${state.revenueTrendYear}-`)) return;
+    state.revenueTargetMonth = input.value;
     render();
   } else if (input.dataset.input === 'deal-owner') {
     state.dealOwnerSelected = input.value;
@@ -2015,6 +2008,17 @@ root.addEventListener('submit', async (event) => {
       state.error = '';
       render();
       setTimeout(() => navigate('/login', true), 1600);
+    } else if (form.dataset.form === 'revenue-target') {
+      await api('/analytics/revenue-targets', {
+        method: 'PUT',
+        body: JSON.stringify({ ...data, targetAmount: Number(data.targetAmount) }),
+      });
+      state.notice = 'Đã lưu chỉ tiêu doanh thu.';
+      state.error = '';
+      state.revenueTrend = null;
+      state.revenueTrendLoadAttempted = false;
+      render();
+      void loadRevenueTrend();
     } else if (form.dataset.form === 'create-user') {
       await api('/admin/users', { method: 'POST', body: JSON.stringify(data) });
       state.users = (await api('/admin/users')).users;

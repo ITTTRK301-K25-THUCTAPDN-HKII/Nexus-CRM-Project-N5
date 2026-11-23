@@ -928,8 +928,15 @@ def sales_revenue_trend():
         tuple(scope_values + [date(year, 1, 1), date(year + 1, 1, 1)]),
     )
 
+    target_rows = query(
+        "SELECT MONTH(month_start) AS month,currency,target_amount AS target "
+        "FROM monthly_revenue_targets WHERE user_id=%s AND month_start >= %s AND month_start < %s "
+        "ORDER BY MONTH(month_start),currency",
+        (g.user["id"], date(year, 1, 1), date(year + 1, 1, 1)),
+    )
+
     months = [
-        {"month": f"{year}-{month:02d}", "actualByCurrency": []}
+        {"month": f"{year}-{month:02d}", "actualByCurrency": [], "targetByCurrency": []}
         for month in range(1, 13)
     ]
     for row in rows:
@@ -937,7 +944,53 @@ def sales_revenue_trend():
             "currency": row["currency"],
             "actual": row["actual"] or 0,
         })
+    for row in target_rows:
+        months[int(row["month"]) - 1]["targetByCurrency"].append({
+            "currency": row["currency"],
+            "target": row["target"] or 0,
+        })
     return jsonify({"year": year, "months": months})
+
+
+def revenue_target_payload(data):
+    if set(data) != {"month", "currency", "targetAmount"}:
+        raise ValueError("Chỉ tiêu cần có tháng, tiền tệ và số tiền.")
+    raw_month = data.get("month")
+    if not isinstance(raw_month, str) or not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", raw_month):
+        raise ValueError("Tháng cần theo định dạng YYYY-MM.")
+    month_start = date.fromisoformat(f"{raw_month}-01")
+    currency = str(data.get("currency", "")).strip().upper()
+    if not re.fullmatch(r"[A-Z]{3}", currency):
+        raise ValueError("Mã tiền tệ cần gồm 3 chữ cái.")
+    try:
+        amount = Decimal(str(data.get("targetAmount")))
+    except (InvalidOperation, ValueError) as error:
+        raise ValueError("Chỉ tiêu doanh thu không hợp lệ.") from error
+    if not amount.is_finite() or amount < 0 or amount > Decimal("9999999999999.99"):
+        raise ValueError("Chỉ tiêu phải từ 0 đến 9,999,999,999,999.99.")
+    return month_start, currency, amount
+
+
+@app.put("/api/analytics/revenue-targets")
+@auth_required
+def save_revenue_target():
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return json_error("Dữ liệu chỉ tiêu không hợp lệ.", 400)
+    try:
+        month_start, currency, amount = revenue_target_payload(data)
+    except ValueError as error:
+        return json_error(str(error), 400)
+    execute(
+        "INSERT INTO monthly_revenue_targets (user_id,month_start,currency,target_amount) "
+        "VALUES (%s,%s,%s,%s) ON DUPLICATE KEY UPDATE target_amount=VALUES(target_amount)",
+        (g.user["id"], month_start, currency, amount),
+    )
+    return jsonify({
+        "month": month_start.strftime("%Y-%m"),
+        "currency": currency,
+        "targetAmount": float(amount),
+    })
 
 
 @app.get("/api/analytics/sales-performance")

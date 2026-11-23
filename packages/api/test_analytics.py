@@ -159,10 +159,11 @@ class SalesAnalyticsApiTests(unittest.TestCase):
     def test_revenue_trend_returns_all_months_and_keeps_currency_separate(self):
         sale = self.authenticate()
         with patch.object(api, "get_user", return_value=sale), patch.object(
-            api, "query", return_value=[
+            api, "query", side_effect=[[
                 {"month": 1, "currency": "USD", "actual": Decimal("120.50")},
                 {"month": 12, "currency": "VND", "actual": Decimal("900000")},
-            ]
+            ], [{"month": 1, "currency": "USD", "target": Decimal("150")},
+                {"month": 11, "currency": "VND", "target": Decimal("1000000")}]]
         ) as query:
             response = self.client.get("/api/analytics/revenue-trend?year=2026")
 
@@ -171,19 +172,50 @@ class SalesAnalyticsApiTests(unittest.TestCase):
         self.assertEqual(len(response.json["months"]), 12)
         self.assertEqual(response.json["months"][0], {
             "month": "2026-01", "actualByCurrency": [{"currency": "USD", "actual": 120.5}],
+            "targetByCurrency": [{"currency": "USD", "target": 150.0}],
         })
         self.assertEqual(response.json["months"][5], {
-            "month": "2026-06", "actualByCurrency": [],
+            "month": "2026-06", "actualByCurrency": [], "targetByCurrency": [],
+        })
+        self.assertEqual(response.json["months"][10], {
+            "month": "2026-11", "actualByCurrency": [],
+            "targetByCurrency": [{"currency": "VND", "target": 1000000.0}],
         })
         self.assertEqual(response.json["months"][11], {
             "month": "2026-12", "actualByCurrency": [{"currency": "VND", "actual": 900000}],
+            "targetByCurrency": [],
         })
-        sql, values = query.call_args.args
+        sql, values = query.call_args_list[0].args
         self.assertIn("d.stage='WON'", sql)
         self.assertIn("d.closed_date >= %s", sql)
         self.assertIn("d.closed_date < %s", sql)
         self.assertIn("d.owner_user_id = %s", sql)
         self.assertEqual(values, (sale["id"], date(2026, 1, 1), date(2027, 1, 1)))
+        self.assertIn("FROM monthly_revenue_targets", query.call_args_list[1].args[0])
+        self.assertEqual(query.call_args_list[1].args[1], (sale["id"], date(2026, 1, 1), date(2027, 1, 1)))
+
+    def test_revenue_target_is_saved_for_the_authenticated_user_and_month(self):
+        sale = self.authenticate(user_id=8)
+        with patch.object(api, "get_user", return_value=sale), patch.object(api, "execute") as execute:
+            response = self.client.put("/api/analytics/revenue-targets", json={
+                "month": "2026-11", "currency": "usd", "targetAmount": "1250.50",
+            })
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json, {
+            "month": "2026-11", "currency": "USD", "targetAmount": 1250.5,
+        })
+        self.assertIn("ON DUPLICATE KEY UPDATE", execute.call_args.args[0])
+        self.assertEqual(execute.call_args.args[1], (
+            8, date(2026, 11, 1), "USD", Decimal("1250.50"),
+        ))
+
+        with patch.object(api, "get_user", return_value=sale), patch.object(api, "execute") as execute:
+            invalid = self.client.put("/api/analytics/revenue-targets", json={
+                "month": "2026-13", "currency": "USD", "targetAmount": -1,
+            })
+        self.assertEqual(invalid.status_code, 400)
+        execute.assert_not_called()
 
     def test_revenue_trend_validates_year_and_requires_authentication(self):
         self.authenticate()
