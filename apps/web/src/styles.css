@@ -896,10 +896,13 @@ h2, h1, p { margin-top: 0; }
 .deal-modal-hint { color: #78859b; font-size: 11px; }
 .deal-modal-actions { display: flex; justify-content: flex-end; gap: 8px; padding-top: 5px; }
 .deal-history-button { justify-self: start; }
-.deal-card-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
-.deal-card-actions .text-button { cursor: pointer; }
-.deal-card-actions .deal-delete-button { border-color: #f1d1d1; background: #fff8f8; color: #b44545; }
-.deal-card-actions .deal-delete-button:hover { border-color: #e8b7b7; background: #fff0f0; }
+.deal-card-actions { display: grid; grid-template-columns: minmax(0, 1fr) minmax(64px, .55fr); align-items: center; gap: 8px; padding-top: 2px; }
+.deal-card-actions .text-button { display: inline-flex; min-height: 36px; align-items: center; justify-content: center; padding: 7px 10px; border: 1px solid #dce4f4; border-radius: 8px; background: #f5f7ff; color: #4059b8; font: inherit; font-size: 11px; font-weight: 700; line-height: 1.2; cursor: pointer; transition: transform .15s ease, box-shadow .15s ease, background .15s ease; }
+.deal-card-actions .text-button:hover { transform: translateY(-1px); background: #edf1ff; box-shadow: 0 4px 10px #243b7214; }
+.deal-card-actions .deal-delete-button { border-color: #f0c9cc; background: #fff3f3; color: #b13d48; }
+.deal-card-actions .deal-delete-button:hover { border-color: #e6aeb4; background: #ffe8e9; }
+.deal-card-actions .text-button:focus-visible { outline: 3px solid #7286e955; outline-offset: 2px; }
+.deal-card-actions .text-button:disabled { opacity: .55; cursor: wait; transform: none; box-shadow: none; }
 .deal-history-modal { max-height: min(80vh, 680px); overflow-y: auto; }
 .deal-history-timeline { padding: 8px 0 0; }
 .deal-history-timeline .timeline-item { padding-bottom: 14px; }
@@ -970,21 +973,29 @@ h2, h1, p { margin-top: 0; }
 .task-table-card .table-title strong { color: #263550; font-size: 13px; }
 .task-table-card .table-title span { color: #8793a7; font-size: 11px; }
 .task-table-card .icon-tile.small-tile { width: 38px; height: 38px; flex: 0 0 38px; margin: 0; border-radius: 10px; }
-.task-data-table { width: 100%; min-width: 1000px; table-layout: fixed; border-collapse: collapse; }
+.task-data-table { width: 100%; min-width: 0; table-layout: fixed; border-collapse: collapse; }
 .task-data-table th { padding: 13px 16px; border-bottom: 1px solid #e8edf4; background: #f8fafc; color: #758198; font-size: 10px; font-weight: 750; letter-spacing: .5px; line-height: 1.4; text-align: left; text-transform: uppercase; }
 .task-data-table td { padding: 14px 16px; border-bottom: 1px solid #f0f2f6; color: #46546b; font-size: 12px; line-height: 1.5; vertical-align: middle; overflow-wrap: anywhere; }
 .task-data-table tbody tr:last-child td { border-bottom: 0; }
 .task-data-table tbody tr:hover td { background: #fafbff; }
-.task-data-table th:nth-child(1) { width: 29%; }
-.task-data-table th:nth-child(2) { width: 19%; }
-.task-data-table th:nth-child(3) { width: 18%; }
-.task-data-table th:nth-child(4) { width: 10%; }
-.task-data-table th:nth-child(5) { width: 15%; }
-.task-data-table th:nth-child(6) { width: 9%; }
+.task-data-table th:nth-child(1) { width: 27%; }
+.task-data-table th:nth-child(2) { width: 18%; }
+.task-data-table th:nth-child(3) { width: 14%; }
+.task-data-table th:nth-child(4) { width: 9%; }
+.task-data-table th:nth-child(5) { width: 18%; }
+.task-data-table th:nth-child(6) { width: 14%; }
 .task-data-table td:first-child strong { color: #263550; font-size: 12px; line-height: 1.45; }
 .task-data-table .task-status-select { width: 100%; max-width: 160px; min-height: 36px; padding: 0 10px; border: 1px solid #dfe5ef; border-radius: 8px; background: #fff; color: #526078; font-size: 11px; }
 .task-data-table .text-button { min-height: 32px; padding: 0 10px; border: 1px solid #dce4f3; border-radius: 8px; background: #f7f8ff; color: #4864c9; font-size: 11px; font-weight: 650; }
 .task-data-table .text-button:hover { border-color: #bdcafa; background: #eef1ff; }
+.task-row-actions { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.task-data-table .task-row-actions .text-button { min-width: 54px; }
+.task-data-table .task-row-actions .task-edit-button { border-color: #dce4f3; background: #f2f5ff; color: #4059b8; }
+.task-data-table .task-row-actions .task-delete-button { border-color: #efbfc3; background: #f8d3d6; color: #a93440; }
+.task-data-table .task-row-actions .task-delete-button:hover { border-color: #e8a5ab; background: #f2c1c6; }
+.task-delete-modal { width: min(100%, 440px); }
+.task-delete-modal > p { color: #68758a; font-size: 13px; line-height: 1.6; }
+.task-confirm-delete { min-height: 36px; padding: 8px 13px; border: 1px solid #c93843; border-radius: 8px; background: #c93843; color: #fff; font: inherit; font-size: 11px; font-weight: 750; cursor: pointer; }
 .task-data-table .empty-row { padding: 30px 18px; color: #8894a8; text-align: center; }
 .task-row-overdue td { background: #fff9f8; }
 .overdue-label { display: block; margin-top: 4px; color: #b34a4e; font-size: 9px; font-weight: 700; }
@@ -1950,13 +1961,16 @@ select {
 .quote-row-actions { display: grid; width: 164px; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; gap: 7px; }
 .quote-row-actions > .text-button, .quote-row-actions > a.text-button { display: inline-flex; min-width: 0; min-height: 34px; align-items: center; justify-content: center; padding: 6px 7px; border: 1px solid transparent; border-radius: 8px; font-size: 10px; font-weight: 700; line-height: 1.2; text-align: center; text-decoration: none; white-space: normal; transition: transform .15s ease, box-shadow .15s ease, background .15s ease; }
 .quote-row-actions > .text-button:hover, .quote-row-actions > a.text-button:hover { transform: translateY(-1px); box-shadow: 0 3px 9px rgba(30, 50, 90, .10); }
-.quote-workflow-button { border-color: #dce5ff !important; background: #eef3ff; color: #405ac0; font-weight: 750; }
+.customer-data-table .quote-workflow-button:not(.quote-approve-button):not(.quote-reject-button) { border-color: #bfd0ff !important; background: #dce7ff !important; color: #3553ad !important; font-weight: 750; }
 .quote-workflow-button:disabled { opacity: .55; cursor: wait; }
-.quote-approve-button { border-color: #c9ead6 !important; background: #eaf8ef; color: #24744f; }
-.quote-reject-button { border-color: #f0d0d2 !important; background: #fff0f0; color: #ad414b; }
+.customer-data-table .quote-approve-button { border-color: #bfe5cd !important; background: #d9f1e2 !important; color: #24744f !important; }
+.customer-data-table .quote-approve-button:hover { border-color: #9bd6b2 !important; background: #c8ead5 !important; }
+.customer-data-table .quote-reject-button { border-color: #efbfc3 !important; background: #f8d3d6 !important; color: #a93440 !important; }
+.customer-data-table .quote-reject-button:hover { border-color: #e8a5ab !important; background: #f2c1c6 !important; }
 .quote-preview-button { border-color: #dce5ff !important; background: #f1f4ff; color: #405ac0; }
 .quote-pdf-button { border-color: #d8eaf5 !important; background: #edf8fc; color: #26718a; }
-.quote-delete-button { border-color: #f0d0d2 !important; background: #fff0f0; color: #b42332; }
+.customer-data-table .quote-delete-button { border-color: #efbfc3 !important; background: #fce4e5 !important; color: #a93440 !important; }
+.customer-data-table .quote-delete-button:hover { border-color: #e8a5ab !important; background: #f8d3d6 !important; }
 .quote-delete-button:disabled { opacity: .55; cursor: wait; }
 .quote-delete-modal { position: relative; width: min(100%, 440px); padding: 28px; }
 .quote-delete-modal .modal-heading { align-items: flex-start; margin-bottom: 14px; }

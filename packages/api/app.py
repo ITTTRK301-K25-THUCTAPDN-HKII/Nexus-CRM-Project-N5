@@ -3393,6 +3393,25 @@ def task_update(task_id):
     return jsonify({"task": task})
 
 
+@app.delete("/api/tasks/<task_id>")
+@auth_required
+def task_delete(task_id):
+    try:
+        parsed_id = positive_id(task_id)
+    except ValueError as error:
+        return validation_error([("task_id", str(error))])
+
+    def delete(cursor):
+        scope, scope_values = task_scope(g.user)
+        where = "id=%s" + (f" AND {scope}" if scope else "")
+        cursor.execute("DELETE FROM tasks WHERE " + where, tuple([parsed_id] + scope_values))
+        return cursor.rowcount == 1
+
+    if not transaction(delete):
+        return json_error("Không tìm thấy Task hoặc bạn không có quyền thao tác.", 404)
+    return "", 204
+
+
 @app.post("/api/activities")
 @auth_required
 def activity_create():
