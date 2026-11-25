@@ -925,10 +925,10 @@ def monthly_revenue_report():
         values.extend(scope_values)
 
     rows = query(
-        f"SELECT DATE_FORMAT({close_date_expr},'%%Y-%%m') AS month,d.currency,"
+        f"SELECT DATE_FORMAT({close_date_expr},'%Y-%m') AS month,d.currency,"
         "COALESCE(SUM(COALESCE(d.closed_amount,d.amount)),0) AS actual "
         "FROM deals d WHERE " + " AND ".join(filters) +
-        f" GROUP BY DATE_FORMAT({close_date_expr},'%%Y-%%m'),d.currency ORDER BY month,d.currency",
+        f" GROUP BY DATE_FORMAT({close_date_expr},'%Y-%m'),d.currency ORDER BY month,d.currency",
         tuple(values),
     )
     return jsonify({

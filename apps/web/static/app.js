@@ -373,16 +373,24 @@ function revenueChartMarkup(currency, monthKeys, actualByMonth) {
     x: ((index + 0.5) / Math.max(1, targetValues.length)) * 1000,
     y: 10 + chartHeight - (target / plotMax) * chartHeight,
   }));
+  const actualBars = actualValues.map((actual, index) => {
+    const x = ((index + 0.5) / Math.max(1, actualValues.length)) * 1000;
+    const width = Math.min(38, 680 / Math.max(1, actualValues.length));
+    const y = 10 + chartHeight - (actual / plotMax) * chartHeight;
+    const label = `${monthKeys[index]}: thực tế ${formatMoney(actual)} ${currency}`;
+    return actual > 0
+      ? `<rect class="revenue-actual-column" x="${(x - width / 2).toFixed(2)}" y="${y.toFixed(2)}" width="${width.toFixed(2)}" height="${Math.max(0, 180 - y).toFixed(2)}" rx="6"><title>${escapeHtml(label)}</title></rect>`
+      : `<line class="revenue-actual-zero" x1="${(x - 5).toFixed(2)}" y1="180" x2="${(x + 5).toFixed(2)}" y2="180"><title>${escapeHtml(label)}</title></line>`;
+  }).join('');
+  const actualBarsLayer = `<svg class="revenue-actual-bars" viewBox="0 0 1000 190" preserveAspectRatio="none" aria-label="Cột doanh thu thực tế">${actualBars}</svg>`;
   const targetLine = Math.max(0, ...targetValues) > 0
     ? `<svg class="revenue-target-line" viewBox="0 0 1000 190" preserveAspectRatio="none" aria-label="Đường chỉ tiêu doanh thu">${targetPoints.length > 1 ? `<polyline points="${targetPoints.map((point) => `${point.x},${point.y}`).join(' ')}" />` : `<line x1="100" y1="${targetPoints[0].y}" x2="900" y2="${targetPoints[0].y}" />`}${targetPoints.map((point) => `<circle cx="${point.x}" cy="${point.y}" r="5" />`).join('')}</svg>`
     : '';
   const bars = monthKeys.map((month, index) => {
     const actual = actualValues[index];
     const target = targetValues[index];
-    const actualHeight = (actual / plotMax) * chartHeight;
     return `<div class="revenue-month-column" role="group" aria-label="${escapeHtml(month)}">
       <div class="revenue-bars" aria-label="${escapeHtml(month)}: thực tế ${escapeHtml(formatMoney(actual))} ${escapeHtml(currency)}, chỉ tiêu ${escapeHtml(formatMoney(target))} ${escapeHtml(currency)}">
-        ${actual > 0 ? `<span class="revenue-bar revenue-bar-actual" style="height:${actualHeight.toFixed(1)}px" title="Thực tế: ${escapeHtml(formatMoney(actual))} ${escapeHtml(currency)}"></span>` : '<span class="revenue-zero-marker" title="Chưa ghi nhận doanh thu thực tế"></span>'}
       </div><span class="revenue-month-label">${escapeHtml(month.slice(5))}/${escapeHtml(month.slice(0, 4))}</span><span class="revenue-month-values"><span>TT ${escapeHtml(formatMoney(actual))}</span><span>CT ${escapeHtml(formatMoney(target))}</span></span></div>`;
   }).join('');
   const actualEmptyNotice = actualValues.some((value) => value > 0)
@@ -394,7 +402,7 @@ function revenueChartMarkup(currency, monthKeys, actualByMonth) {
   return `<article class="funnel-card revenue-card"><header class="funnel-card-heading"><div><h3>Doanh thu thực tế vs chỉ tiêu · ${escapeHtml(currency)}</h3>
     <p>Doanh thu thực tế lấy từ Deal WON theo ngày chốt (hoặc ngày cập nhật/ngày tạo nếu Deal cũ chưa có ngày chốt). Nhập chỉ tiêu theo từng tháng; chỉ tiêu được lưu trên trình duyệt này.</p></div>
     <div class="revenue-legend"><span><i class="revenue-legend-actual"></i>Thực tế</span><span><i class="revenue-legend-target"></i>Chỉ tiêu</span></div></header>
-    <div class="revenue-chart-scroll"><div class="revenue-plot"><div class="revenue-y-axis" aria-label="Thang doanh thu ${escapeHtml(currency)}"><div class="revenue-axis-ticks">${axisTicks}</div><span class="revenue-axis-unit">${escapeHtml(currency)}</span></div><div class="revenue-chart ${scaleMax ? '' : 'revenue-chart-empty'}" style="--revenue-month-count:${monthKeys.length}">${bars}${targetLine}</div></div></div>
+    <div class="revenue-chart-scroll"><div class="revenue-plot"><div class="revenue-y-axis" aria-label="Thang doanh thu ${escapeHtml(currency)}"><div class="revenue-axis-ticks">${axisTicks}</div><span class="revenue-axis-unit">${escapeHtml(currency)}</span></div><div class="revenue-chart ${scaleMax ? '' : 'revenue-chart-empty'}" style="--revenue-month-count:${monthKeys.length}">${bars}${actualBarsLayer}${targetLine}</div></div></div>
     ${actualEmptyNotice}
     <div class="revenue-target-grid" aria-label="Thiết lập chỉ tiêu doanh thu theo tháng">${targetInputs}</div>
   </article>`;
