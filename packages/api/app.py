@@ -363,6 +363,8 @@ def page_options():
 def ownership(user, column="owner_user_id"):
     if user["role"] == "Admin":
         return "", []
+    if user["role"] == "Manager":
+        return f"({column}=%s OR {column} IN (SELECT id FROM users WHERE role='Sale'))", [user["id"]]
     return f"{column} = %s", [user["id"]]
 
 
@@ -673,6 +675,20 @@ def deal_select(where=""):
 def can_access_customer(user, entity, entity_id):
     if user["role"] == "Admin":
         return True
+    if user["role"] == "Manager":
+        scope, scope_values = ownership(user)
+        if entity == "contacts":
+            return bool(query(
+                "SELECT c.id FROM contacts c INNER JOIN accounts a ON a.id=c.account_id "
+                "WHERE c.id=%s AND c.owner_user_id IN (SELECT id FROM users WHERE role='Sale' UNION SELECT %s) "
+                "AND a.owner_user_id IN (SELECT id FROM users WHERE role='Sale' UNION SELECT %s) LIMIT 1",
+                (entity_id, user["id"], user["id"]),
+            ))
+        extra = f" AND {scope}"
+        values = (entity_id, *scope_values)
+        if entity == "leads":
+            extra += " AND deleted_at IS NULL"
+        return bool(query(f"SELECT id FROM {entity} WHERE id=%s{extra} LIMIT 1", values))
     if entity == "contacts":
         extra = "" if user["role"] == "Admin" else " AND c.owner_user_id = %s AND a.owner_user_id = %s"
         values = (entity_id,) if not extra else (entity_id, user["id"], user["id"])
@@ -3615,7 +3631,11 @@ def _contacts_list(customer_api):
             values.append(positive_id(account_id))
         except ValueError as error:
             return json_error(str(error), 400)
-    if g.user["role"] != "Admin":
+    if g.user["role"] == "Manager":
+        sale_scope = "IN (SELECT id FROM users WHERE role='Sale' UNION SELECT %s)"
+        filters.extend([f"c.owner_user_id {sale_scope}", f"a.owner_user_id {sale_scope}"])
+        values.extend([g.user["id"], g.user["id"]])
+    elif g.user["role"] != "Admin":
         filters.extend(["c.owner_user_id=%s", "a.owner_user_id=%s"])
         values.extend([g.user["id"], g.user["id"]])
     if search:
