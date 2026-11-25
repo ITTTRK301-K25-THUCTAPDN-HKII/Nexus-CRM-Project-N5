@@ -1,123 +1,85 @@
 # Nexus CRM
 
-Nexus CRM uses Flask (Python) for the API and web server, with plain HTML, CSS
-and JavaScript for the interface. MySQL stores application data.
+Nexus CRM là ứng dụng quản lý quan hệ khách hàng. Backend và máy chủ web dùng Flask (Python), giao diện dùng HTML, CSS và JavaScript thuần, dữ liệu được lưu trong MySQL.
 
-## Requirements
+## Yêu cầu
 
-- Python 3.11 or newer
-- MySQL Server 8.0 or newer
-- Windows PowerShell (commands below use Windows paths)
+- Python 3.11 trở lên.
+- MySQL Server 8.0 trở lên.
+- Windows PowerShell (các lệnh trong hướng dẫn dùng đường dẫn Windows).
 
-Node.js and npm are not required to run this version of the project. The Deal board's React and DnD Kit code is already bundled in `apps/web/static/deal-board.js`, and the browser loads that bundle only when the Deal page is opened. Node.js and npm are needed only when rebuilding that bundle after editing its source.
+Không cần Node.js hoặc npm để chạy phiên bản hiện tại. Mã React và DnD Kit của bảng Deal đã được đóng gói sẵn tại `apps/web/static/deal-board.js`; trình duyệt chỉ tải tệp này khi mở trang Deal. Chỉ cần Node.js/npm khi sửa mã nguồn bảng Deal và cần đóng gói lại.
 
-## 1. Prepare MySQL
+## 1. Chuẩn bị MySQL
 
-The database entity relationship diagram is available in
-[`docs/ERD.md`](docs/ERD.md).
+Sơ đồ quan hệ dữ liệu có tại [`docs/ERD.md`](docs/ERD.md).
 
-1. Start MySQL Server and connect to it with MySQL Workbench or another MySQL
-   client.
-2. Open `packages/api/sql/schema.mysql.sql` and execute the whole script. It
-   creates the `nexus_crm` database and the tables used by the application.
-3. If you already have a database created from an older version of the schema,
-   check whether `leads.deleted_at` and the `idx_leads_active_created` index
-   exist. If either is missing, run
-   `packages/api/sql/migrations/003_lead_soft_delete.sql` once. Do not run that
-   migration again after it has already been applied.
-4. For an existing database, check that `deals.version` exists. If it does not,
-   run `packages/api/sql/migrations/004_deal_version.sql` once to enable version
-   conflict checks when moving Deal cards. New databases get this column from
-   `schema.mysql.sql` automatically.
-5. For an existing database, check that `deals.closed_amount`, `deals.closed_date`
-   and `deals.lost_reason` exist. If missing, run
-   `packages/api/sql/migrations/005_deal_close_fields.sql` once. New databases
-   receive these fields from `schema.mysql.sql`.
-6. For an existing database, run
-   `packages/api/sql/migrations/006_task_telegram_notifications.sql` once to add
-   Telegram Chat IDs and retry tracking. New databases already have these fields.
-7. For an existing database created before recurring appointments, check that
-   `appointment_series` and `appointments.recurrence_series_id` exist. If both
-   are missing, run `packages/api/sql/migrations/007_appointment_recurrence.sql`
-   once. New databases already include recurring appointment support.
-8. For an existing database created before quote approvals, check whether
-   `quotes.approval_status` and the other approval columns exist. If they are
-   missing, run `packages/api/sql/migrations/008_quote_approval.sql` once. This
-   migration also creates `quote_history`.
-9. For an existing database created before quote decimal totals, run
-   `packages/api/sql/migrations/009_quote_decimal_totals.sql` once after migration
-   008. New databases already include approval and total fields.
-10. For an existing database created before quote versioning, run
-    `packages/api/sql/migrations/010_quote_versioning.sql` once after migrations
-    008 and 009. New databases already include quote version fields.
-11. For an existing database, apply
-    `packages/api/sql/migrations/011_customer_deal_task_indexes.sql` once to add
-    the customer ownership/phone, active Lead filter, Deal owner/stage, and Task
-    assignee/due-date indexes. New databases receive these indexes from
-    `schema.mysql.sql`. Lead phone, Lead status, Deal stage, and Task reminder
-    indexes already exist and are not duplicated.
+1. Khởi động MySQL Server và kết nối bằng MySQL Workbench hoặc công cụ MySQL khác.
+2. Mở `packages/api/sql/schema.mysql.sql` và chạy toàn bộ nội dung. Tệp này tạo database `nexus_crm` cùng các bảng ứng dụng sử dụng.
+3. Nếu database được tạo từ schema cũ, kiểm tra `leads.deleted_at` và chỉ mục `idx_leads_active_created`. Nếu thiếu một trong hai, chạy một lần `packages/api/sql/migrations/003_lead_soft_delete.sql`. Không chạy lại migration này sau khi đã áp dụng.
+4. Với database có sẵn, kiểm tra cột `deals.version`. Nếu chưa có, chạy một lần `packages/api/sql/migrations/004_deal_version.sql` để phát hiện xung đột phiên bản khi di chuyển thẻ Deal. Database mới đã có cột này trong schema chính.
+5. Kiểm tra các cột `deals.closed_amount`, `deals.closed_date` và `deals.lost_reason`. Nếu thiếu, chạy một lần `packages/api/sql/migrations/005_deal_close_fields.sql`. Database mới đã có các cột này.
+6. Với database có sẵn, chạy một lần `packages/api/sql/migrations/006_task_telegram_notifications.sql` để bổ sung Telegram Chat ID và thông tin theo dõi gửi lại thông báo. Database mới đã có các trường này.
+7. Nếu database được tạo trước khi có lịch hẹn định kỳ, kiểm tra bảng `appointment_series` và cột `appointments.recurrence_series_id`. Nếu cả hai đều chưa có, chạy một lần `packages/api/sql/migrations/007_appointment_recurrence.sql`. Database mới đã hỗ trợ lịch định kỳ.
+8. Nếu database được tạo trước quy trình duyệt báo giá, kiểm tra `quotes.approval_status` và các cột duyệt liên quan. Nếu thiếu, chạy một lần `packages/api/sql/migrations/008_quote_approval.sql`. Migration này cũng tạo bảng `quote_history`.
+9. Nếu database được tạo trước khi báo giá hỗ trợ số tiền dạng decimal, chạy `packages/api/sql/migrations/009_quote_decimal_totals.sql` sau migration 008. Database mới đã có các trường tổng tiền cần thiết.
+10. Nếu database được tạo trước khi hỗ trợ phiên bản báo giá, chạy `packages/api/sql/migrations/010_quote_versioning.sql` sau migration 008 và 009. Database mới đã có các trường phiên bản.
+11. Với database có sẵn, chạy một lần `packages/api/sql/migrations/011_customer_deal_task_indexes.sql` để thêm các chỉ mục cho quyền sở hữu/thông tin điện thoại khách hàng, bộ lọc Lead còn hoạt động, người phụ trách/giai đoạn Deal và người được giao/hạn Task. Database mới đã có các chỉ mục này trong schema chính. Các chỉ mục Lead phone/status, Deal stage và Task reminder đã tồn tại nên không bị tạo trùng.
 
-## 2. Configure the database connection
+Migration là các script cập nhật cấu trúc database cũ. Chỉ chạy migration còn thiếu và chưa áp dụng; không chạy lặp lại tùy tiện.
 
-From the repository root, copy `.env.example` to `.env` and set the database
-host, port, username, password and database name to match your local MySQL
-configuration:
+## 2. Cấu hình kết nối database
+
+Tại thư mục gốc dự án, sao chép `.env.example` thành `.env`, sau đó chỉnh máy chủ, cổng, tài khoản, mật khẩu và tên database khớp với cấu hình MySQL trên máy:
 
 ```powershell
 Copy-Item .env.example .env
 ```
 
-The default database name is `nexus_crm`. Keep `.env` on your computer; do not
-commit it or share its credentials.
+Tên database mặc định là `nexus_crm`. Giữ `.env` trên máy của bạn, không commit lên Git hoặc chia sẻ thông tin đăng nhập trong tệp.
 
-## Sales analytics APIs
+## API phân tích bán hàng
 
-Authenticated users can request sales KPIs with `GET /api/analytics/kpis` or
-lead/deal funnel breakdowns with `GET /api/analytics/funnel`. Both endpoints
-accept optional inclusive `from` and `to` query parameters in `YYYY-MM-DD`
-format to filter records by creation date and apply the caller's existing
-ownership scope. KPI and funnel values are reported separately per currency;
-deal win rate is won deals divided by closed (won or lost) deals, while lead
-conversion rate is converted leads divided by active leads.
+Người dùng đã đăng nhập có thể lấy KPI bằng `GET /api/analytics/kpis` và phân tích phễu Lead/Deal bằng `GET /api/analytics/funnel`. Hai API nhận tham số tùy chọn `from` và `to` theo định dạng `YYYY-MM-DD` (bao gồm cả ngày bắt đầu và kết thúc), lọc theo ngày tạo và áp dụng phạm vi dữ liệu của người gọi. KPI/phễu được tính riêng theo từng loại tiền tệ; tỷ lệ thắng Deal là số Deal WON chia cho số Deal đã đóng (WON hoặc LOST), còn tỷ lệ chuyển đổi Lead là số Lead đã chuyển đổi chia cho số Lead đang hoạt động.
 
-Managers and Admins can request per-Sale performance with
-`GET /api/analytics/sales-performance?period=month&date=2026-11-20`. Supported
-periods are `day`, `week` (Monday through Sunday), `month`, and `quarter`; `date`
-selects the day inside the requested period and defaults to today. The response
-returns deals created/opened in the period, deals won/lost by `closed_date`,
-won revenue grouped by currency, and leads created/converted in the period for
-each Sale. Revenue is not combined across currencies.
+Manager và Admin có thể xem hiệu quả theo từng Sale bằng API mẫu:
 
-## Telegram task reminders
+```text
+GET /api/analytics/sales-performance?period=month&date=2026-11-20
+```
 
-Set `TELEGRAM_BOT_TOKEN` in `.env` and set each Sale user's
-`users.telegram_chat_id` in MySQL. The Sale user must start a chat with the bot.
-The app scans every five minutes for open tasks due in 15–30 minutes. It tries
-each alert at most three times and records successful sends in
-`tasks.telegram_notified_at`.
+Các kỳ được hỗ trợ: `day` (ngày), `week` (tuần từ thứ Hai đến Chủ nhật), `month` (tháng), `quarter` (quý). `date` chọn một ngày nằm trong kỳ và mặc định là hôm nay. Kết quả gồm Deal được tạo/mở trong kỳ, Deal WON/LOST theo `closed_date`, doanh thu WON tách theo tiền tệ và Lead được tạo/chuyển đổi trong kỳ cho từng Sale. Hệ thống không cộng gộp doanh thu khác loại tiền tệ.
 
-## Customer 360° Gemini AI Copilot
+## Nhắc việc Task qua Telegram
 
-Nexus CRM tích hợp Google Gemini API (`google-genai` SDK) để cung cấp trợ lý chiến lược thông minh trên màn hình chi tiết khách hàng (**Customer 360°**):
-- **Đánh giá sức khỏe quan hệ khách hàng**: Tính toán điểm số (0-100) và trạng thái (Xuất sắc, Tích cực, Cần chú ý, Nguy cơ) dựa trên hồ sơ, liên hệ, cơ hội Deal và lịch sử tương tác.
-- **Tóm tắt điều hành & Điểm nhấn**: Tóm lược nhanh hiện trạng và các thông tin then chốt trước khi gặp khách hàng.
-- **Phân tích Rủi ro & Cơ hội phát triển**: Nhận diện nguy cơ đình trệ và tiềm năng mở rộng doanh thu (upsell/cross-sell).
-- **Đề xuất hành động (Next Best Actions) với 1-click tạo Task**: Cho phép nhân viên kinh doanh chuyển trực tiếp các hành động gợi ý thành công việc (Tasks) trong CRM.
-- **Soạn thảo Email cá nhân hóa**: Tạo sẵn mẫu email tiếp cận/chăm sóc khách hàng tự nhiên kèm nút sao chép nhanh 1 chạm.
+Cấu hình `TELEGRAM_BOT_TOKEN` trong `.env` và lưu Chat ID của từng Sale vào cột `users.telegram_chat_id` trong MySQL. Sale cần bắt đầu cuộc trò chuyện với bot trước. Ứng dụng quét mỗi 5 phút để tìm Task chưa hoàn thành sắp đến hạn trong 15–30 phút. Mỗi cảnh báo được thử gửi tối đa 3 lần; lần gửi thành công được ghi tại `tasks.telegram_notified_at`.
 
-### Cấu hình Gemini API:
-1. Nhận khóa API miễn phí từ [Google AI Studio](https://aistudio.google.com/).
-2. Thêm vào file `.env`:
+## Gemini AI Copilot trên hồ sơ khách hàng Customer 360°
+
+Nexus CRM tích hợp Google Gemini API thông qua SDK `google-genai`, cung cấp trợ lý trên trang chi tiết khách hàng:
+
+- Đánh giá sức khỏe quan hệ khách hàng bằng điểm 0–100 và trạng thái từ hồ sơ, liên hệ, Deal và lịch sử tương tác.
+- Tóm tắt hiện trạng khách hàng và các điểm đáng chú ý trước cuộc gặp.
+- Nhận diện rủi ro, cơ hội phát triển, bán thêm hoặc bán chéo.
+- Đề xuất việc tiếp theo; người dùng có thể tạo Task từ đề xuất.
+- Soạn email cá nhân hóa và sao chép nội dung.
+
+### Cấu hình Gemini API
+
+1. Tạo API key trong [Google AI Studio](https://aistudio.google.com/).
+2. Điền cấu hình trong `.env`:
+
    ```env
    GEMINI_API_KEY=your_gemini_api_key_here
    GEMINI_MODEL=gemini-3.8-flash
    ```
-   *(Model mặc định là `gemini-3.8-flash`; có thể thay bằng model Gemini đang được tài khoản của bạn hỗ trợ.)*
-3. Service `packages/api/gemini_service.py` có helper `generate_text(prompt)` trả chuỗi và `generate_json(prompt)` trả object/list Python đã parse từ JSON. Hai luồng Copilot và tóm tắt tương tác hiện dùng helper chuyên biệt có schema để kiểm tra kết quả.
 
-## 3. Install Python dependencies
+   Model mặc định là `gemini-3.8-flash`; có thể đổi sang model được tài khoản Google AI Studio hỗ trợ.
+3. Service `packages/api/gemini_service.py` có `generate_text(prompt)` để nhận văn bản và `generate_json(prompt)` để nhận dữ liệu JSON đã phân tích thành object/list Python. Các luồng Copilot và tóm tắt tương tác sử dụng helper có schema để kiểm tra kết quả.
 
-Run these commands from the repository root:
+## 3. Cài các thư viện Python
+
+Chạy tại thư mục gốc dự án:
 
 ```powershell
 py -3 -m venv .venv
@@ -125,60 +87,46 @@ py -3 -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-If `py -3` is not available, replace it with `python`:
+Nếu lệnh `py -3` không khả dụng, dùng `python` để tạo môi trường ảo:
 
 ```powershell
 python -m venv .venv
 ```
 
-## 4. Start the application
+## 4. Khởi động ứng dụng
 
-From the repository root, run:
+Tại thư mục gốc dự án, chạy:
 
 ```powershell
 .\.venv\Scripts\python.exe packages\api\app.py
 ```
 
-Keep the terminal open while using the app. Open
-<http://127.0.0.1:3001> in your browser. Press `Ctrl+C` in the terminal to stop
-the server.
+Giữ cửa sổ terminal mở trong khi sử dụng ứng dụng. Mở <http://127.0.0.1:3001> trong trình duyệt. Nhấn `Ctrl+C` trong terminal để dừng máy chủ.
 
-In development mode, the server creates these demo accounts if they do not
-already exist:
+Ở chế độ development, máy chủ tự tạo các tài khoản demo bên dưới nếu chúng chưa tồn tại:
 
-| Role | Email | Password |
+| Vai trò | Email | Mật khẩu |
 | --- | --- | --- |
 | Admin | `admin@nexus.local` | `Admin123!` |
 | Manager | `manager@nexus.local` | `Manager123!` |
 | Sale | `sale@nexus.local` | `Sale123!` |
 
-Password reset links are written to the development mailbox table. Real email
-delivery is not configured.
+Liên kết đặt lại mật khẩu được ghi vào bảng hộp thư development. Dự án chưa cấu hình gửi email thật.
 
-## Container deployment
+## Chạy bằng Docker Compose
 
-Docker Compose can run the app with MySQL 8.0. Copy `.env.example` to `.env`,
-then set `DEPLOY_DB_PASSWORD`, `MYSQL_ROOT_PASSWORD`, and a unique
-`DEPLOY_JWT_SECRET` of at least 32 characters before starting the stack. The
-containerized app runs in production mode as a non-root user behind Waitress;
-the database is only reachable on the Compose network, and its data persists in
-the `nexus_mysql_data` volume.
+Docker Compose có thể chạy ứng dụng cùng MySQL 8.0. Sao chép `.env.example` thành `.env`, rồi đặt `DEPLOY_DB_PASSWORD`, `MYSQL_ROOT_PASSWORD` và một giá trị riêng cho `DEPLOY_JWT_SECRET` dài tối thiểu 32 ký tự trước khi khởi động. Ứng dụng trong container chạy chế độ production dưới tài khoản không phải root, sử dụng Waitress; database chỉ truy cập được trong mạng Compose và dữ liệu được lưu trong volume `nexus_mysql_data`.
 
 ```powershell
 docker compose up --build -d
 docker compose logs -f api
 ```
 
-Open <http://127.0.0.1:3001>. On the first start, MySQL loads
-`schema.mysql.sql` into the new database volume. Existing databases are not
-automatically migrated; apply any required SQL migrations manually before
-deploying. To stop the app while preserving database data, run
-`docker compose down`. To intentionally remove the database volume as well,
-run `docker compose down --volumes`.
+Mở <http://127.0.0.1:3001>. Ở lần chạy đầu, MySQL nạp `schema.mysql.sql` vào volume database mới. Database có sẵn không được migration tự động; hãy áp dụng thủ công các migration cần thiết trước khi triển khai. Dừng ứng dụng nhưng giữ dữ liệu bằng `docker compose down`. Chỉ dùng `docker compose down --volumes` khi chủ động muốn xóa cả volume database.
 
-## Rebuild the Deal board after changing its React source
+## Đóng gói lại bảng Deal sau khi sửa mã React
 
-From the repository root, run these commands after editing `apps/web/src/deal-board.jsx`:
+Tại thư mục gốc, chạy các lệnh sau sau khi chỉnh `apps/web/src/deal-board.jsx`:
 
 ```powershell
 Set-Location apps\web
@@ -187,22 +135,20 @@ npm run build
 Set-Location ..\..
 ```
 
-Vite writes the browser-ready bundle to `apps/web/static/deal-board.js`, which Flask serves with the rest of the static files.
+Vite tạo bundle trình duyệt tại `apps/web/static/deal-board.js`; Flask phục vụ tệp này cùng các tài nguyên web còn lại.
 
-## Tests
+## Kiểm thử
 
-Run the Python unit tests from the repository root:
+Chạy các kiểm thử Python tại thư mục gốc:
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s packages\api -p "test_*.py"
 ```
 
-Or run the automated test and frontend syntax checks using PowerShell:
+Hoặc chạy kiểm thử tự động và kiểm tra cú pháp frontend bằng PowerShell:
 
 ```powershell
 .\scripts\run_tests.ps1
 ```
 
-The suite includes unit tests and Flask API integration tests; database-backed
-tests use mocks and do not clear application data. GitHub Actions runs the same
-suite on pushes and pull requests.
+Bộ kiểm thử gồm unit test và kiểm thử tích hợp Flask API. Các kiểm thử cần database sử dụng mock, không xóa dữ liệu ứng dụng. GitHub Actions chạy cùng bộ kiểm thử khi có push hoặc pull request.
