@@ -40,6 +40,7 @@ const state = {
   quotePreviewId: null,
   quoteActionBusyId: '',
   quoteRejectId: '',
+  quoteDeleteId: '',
   dealFormOpen: false,
   dealAccounts: [],
   dealAssignees: [],
@@ -380,7 +381,7 @@ function revenueChartMarkup(currency, monthKeys, actualByMonth) {
     const label = `${monthKeys[index]}: thực tế ${formatMoney(actual)} ${currency}`;
     return actual > 0
       ? `<rect class="revenue-actual-column" x="${(x - width / 2).toFixed(2)}" y="${y.toFixed(2)}" width="${width.toFixed(2)}" height="${Math.max(0, 180 - y).toFixed(2)}" rx="6"><title>${escapeHtml(label)}</title></rect>`
-      : `<line class="revenue-actual-zero" x1="${(x - 5).toFixed(2)}" y1="180" x2="${(x + 5).toFixed(2)}" y2="180"><title>${escapeHtml(label)}</title></line>`;
+      : '';
   }).join('');
   const actualBarsLayer = `<svg class="revenue-actual-bars" viewBox="0 0 1000 190" preserveAspectRatio="none" aria-label="Cột doanh thu thực tế">${actualBars}</svg>`;
   const targetLine = Math.max(0, ...targetValues) > 0
@@ -389,10 +390,12 @@ function revenueChartMarkup(currency, monthKeys, actualByMonth) {
   const bars = monthKeys.map((month, index) => {
     const actual = actualValues[index];
     const target = targetValues[index];
-    return `<div class="revenue-month-column" role="group" aria-label="${escapeHtml(month)}">
-      <div class="revenue-bars" aria-label="${escapeHtml(month)}: thực tế ${escapeHtml(formatMoney(actual))} ${escapeHtml(currency)}, chỉ tiêu ${escapeHtml(formatMoney(target))} ${escapeHtml(currency)}">
-      </div><span class="revenue-month-label">${escapeHtml(month.slice(5))}/${escapeHtml(month.slice(0, 4))}</span><span class="revenue-month-values"><span>TT ${escapeHtml(formatMoney(actual))}</span><span>CT ${escapeHtml(formatMoney(target))}</span></span></div>`;
+    return `<div class="revenue-month-column" role="group" aria-label="${escapeHtml(month)}: thực tế ${escapeHtml(formatMoney(actual))} ${escapeHtml(currency)}, chỉ tiêu ${escapeHtml(formatMoney(target))} ${escapeHtml(currency)}"><div class="revenue-bars"></div></div>`;
   }).join('');
+  const monthAxis = `<svg class="revenue-month-axis" viewBox="0 0 1000 62" preserveAspectRatio="none" aria-label="Giá trị doanh thu theo tháng">${monthKeys.map((month, index) => {
+    const x = ((index + 0.5) / Math.max(1, monthKeys.length)) * 1000;
+    return `<text class="revenue-axis-month" x="${x}" y="15">${escapeHtml(month.slice(5))}/${escapeHtml(month.slice(0, 4))}</text><text class="revenue-axis-actual" x="${x}" y="32">TT ${escapeHtml(formatMoney(actualValues[index]))}</text><text class="revenue-axis-target" x="${x}" y="48">CT ${escapeHtml(formatMoney(targetValues[index]))}</text>`;
+  }).join('')}</svg>`;
   const actualEmptyNotice = actualValues.some((value) => value > 0)
     ? ''
     : '<p class="revenue-empty-notice">Chưa ghi nhận Deal WON trong kỳ. Doanh thu được tính theo ngày chốt; nếu thiếu, hệ thống dùng ngày cập nhật hoặc ngày tạo Deal.</p>';
@@ -402,9 +405,9 @@ function revenueChartMarkup(currency, monthKeys, actualByMonth) {
   return `<article class="funnel-card revenue-card"><header class="funnel-card-heading"><div><h3>Doanh thu thực tế vs chỉ tiêu · ${escapeHtml(currency)}</h3>
     <p>Doanh thu thực tế lấy từ Deal WON theo ngày chốt (hoặc ngày cập nhật/ngày tạo nếu Deal cũ chưa có ngày chốt). Nhập chỉ tiêu theo từng tháng; chỉ tiêu được lưu trên trình duyệt này.</p></div>
     <div class="revenue-legend"><span><i class="revenue-legend-actual"></i>Thực tế</span><span><i class="revenue-legend-target"></i>Chỉ tiêu</span></div></header>
-    <div class="revenue-chart-scroll"><div class="revenue-plot"><div class="revenue-y-axis" aria-label="Thang doanh thu ${escapeHtml(currency)}"><div class="revenue-axis-ticks">${axisTicks}</div><span class="revenue-axis-unit">${escapeHtml(currency)}</span></div><div class="revenue-chart ${scaleMax ? '' : 'revenue-chart-empty'}" style="--revenue-month-count:${monthKeys.length}">${bars}${actualBarsLayer}${targetLine}</div></div></div>
+    <div class="revenue-chart-scroll"><div class="revenue-plot" style="--revenue-month-count:${monthKeys.length}"><div class="revenue-y-axis" aria-label="Thang doanh thu ${escapeHtml(currency)}"><div class="revenue-axis-ticks">${axisTicks}</div><span class="revenue-axis-unit">${escapeHtml(currency)}</span></div><div class="revenue-chart ${scaleMax ? '' : 'revenue-chart-empty'}" style="--revenue-month-count:${monthKeys.length}">${bars}${actualBarsLayer}${targetLine}${monthAxis}</div></div></div>
     ${actualEmptyNotice}
-    <div class="revenue-target-grid" aria-label="Thiết lập chỉ tiêu doanh thu theo tháng">${targetInputs}</div>
+    <div class="revenue-target-scroll"><div class="revenue-target-grid" style="--revenue-month-count:${monthKeys.length}" aria-label="Thiết lập chỉ tiêu doanh thu theo tháng">${targetInputs}</div></div>
   </article>`;
 }
 function workspacePage() {
@@ -532,7 +535,7 @@ function updateQuotePreview() {
 }
 function quoteLine(line, index, availableProducts, currency) {
   return `<div class="quote-line" data-quote-line="${index}">
-    <label>Sản phẩm
+    <label>Sản phẩm / dịch vụ
       <select name="productId" data-quote-field="productId" required ${availableProducts.length ? '' : 'disabled'}>
         <option value="">${availableProducts.length ? 'Chọn sản phẩm' : 'Không có sản phẩm cùng tiền tệ'}</option>
         ${availableProducts.map((product) => `<option value="${product.id}" ${String(product.id) === String(line.productId) ? 'selected' : ''}>${escapeHtml(product.sku)} · ${escapeHtml(product.name)} (${quoteFormatCents(quoteMoneyParts(product.unitPrice, 2), currency)})</option>`).join('')}
@@ -552,6 +555,7 @@ function quotesPage() {
   const roleCanApprove = ['Admin', 'Manager'].includes(state.user?.role);
   const rows = state.quotes.map((quote) => {
     const busy = state.quoteActionBusyId === String(quote.id);
+    const canDelete = quote.status === 'DRAFT' && ['NOT_REQUESTED', 'REJECTED'].includes(quote.approvalStatus);
     const approvalLabels = { NOT_REQUESTED: '', PENDING: 'Chờ duyệt', APPROVED: 'Đã duyệt', REJECTED: 'Từ chối duyệt' };
     let workflowActions = '';
     if (quote.status === 'DRAFT' && ['NOT_REQUESTED', 'REJECTED'].includes(quote.approvalStatus)) {
@@ -566,20 +570,27 @@ function quotesPage() {
     <td>${escapeHtml(quote.dealName || '—')}</td>
     <td><span class="quote-status quote-status-${String(quote.status).toLowerCase()}">${escapeHtml(({ DRAFT: 'Bản nháp', SENT: 'Đã gửi', ACCEPTED: 'Đã chấp nhận', REJECTED: 'Khách từ chối', EXPIRED: 'Hết hạn' })[quote.status] || quote.status)}</span>${approvalLabels[quote.approvalStatus] ? `<span class="quote-approval-status quote-approval-${String(quote.approvalStatus).toLowerCase()}">${approvalLabels[quote.approvalStatus]}</span>` : ''}${quote.approvalStatus === 'REJECTED' && quote.approvalNote ? `<span class="quote-table-sub">Lý do: ${escapeHtml(quote.approvalNote)}</span>` : ''}</td>
     <td>${quoteFormatCents(quoteMoneyParts(quote.grandTotal ?? quote.totalAmount, 2), quote.currency)}</td>
-    <td><div class="row-actions quote-row-actions">${workflowActions}<button class="text-button" data-action="preview-quote" data-id="${escapeHtml(quote.id)}">Xem trước</button><a class="text-button" href="/api/quotes/${encodeURIComponent(quote.id)}/pdf">Tải PDF</a></div></td>
+    <td><div class="row-actions quote-row-actions">${workflowActions}<button class="text-button quote-preview-button" data-action="preview-quote" data-id="${escapeHtml(quote.id)}">Xem trước</button><a class="text-button quote-pdf-button" href="/api/quotes/${encodeURIComponent(quote.id)}/pdf">Tải PDF</a>${canDelete ? `<button class="text-button quote-delete-button" data-action="delete-quote" data-id="${escapeHtml(quote.id)}" ${busy ? 'disabled' : ''}>${busy ? 'Đang xóa…' : 'Xóa'}</button>` : ''}</div></td>
   </tr>`;
   }).join('');
   return `<div class="app-shell">${appSidebar('quotes')}<main class="admin-content quote-content">
     <header class="topbar"><div><span class="eyebrow">SALES DOCUMENTS</span><h1>Báo giá</h1></div><div class="admin-avatar">${escapeHtml(state.user?.role || '')}</div></header>
-    ${alertBox(state.error)}${alertBox(state.notice, 'success')}
+    ${state.quoteDeleteId ? '' : alertBox(state.error)}${alertBox(state.notice, 'success')}
     <section class="page-intro"><div><h2>Danh sách báo giá</h2><p class="muted">Tạo báo giá từ Deal và danh mục sản phẩm. Cần duyệt trước khi đánh dấu Đã gửi; trạng thái này chưa gửi email tự động.</p></div><button class="primary-button compact" data-action="new-quote">＋ Lập báo giá</button></section>
     <section class="customer-table-card quote-list-card"><div class="table-scroll"><table class="customer-data-table quote-table">
       <thead><tr><th>MÃ BÁO GIÁ / KHÁCH HÀNG</th><th>DEAL</th><th>TRẠNG THÁI</th><th>TỔNG CỘNG</th><th>TÀI LIỆU</th></tr></thead>
       <tbody>${rows || `<tr><td class="empty-row" colspan="5">${state.quotesLoading || (!state.quotesLoadAttempted && !state.quotesLoaded) ? 'Đang tải báo giá...' : state.quotesLoadFailed ? 'Không tải được dữ liệu báo giá. ' : 'Chưa có báo giá. Hãy tạo báo giá đầu tiên.'}${state.quotesLoadFailed ? '<button class="text-button" data-action="retry-quotes">Thử tải lại</button>' : ''}</td></tr>`}</tbody>
     </table></div></section>
     ${state.quoteRejectId ? `<div class="modal-backdrop quote-reject-backdrop"><section class="customer-modal quote-reject-modal" role="dialog" aria-modal="true" aria-labelledby="quote-reject-title"><div class="modal-heading"><div><span class="eyebrow">QUY TRÌNH DUYỆT</span><h2 id="quote-reject-title">Từ chối báo giá</h2></div><button class="modal-close" type="button" data-action="cancel-quote-rejection" aria-label="Đóng" ${state.quoteActionBusyId ? 'disabled' : ''}>×</button></div><p class="muted">Vui lòng ghi rõ lý do để nhân viên biết nội dung cần điều chỉnh.</p><form class="customer-form single-column" data-form="quote-rejection"><label class="wide-field">Lý do từ chối *<textarea name="note" rows="4" required minlength="2" maxlength="1000" placeholder="Nhập lý do từ chối..."></textarea></label><div class="form-actions"><button type="button" class="secondary-button compact" data-action="cancel-quote-rejection" ${state.quoteActionBusyId ? 'disabled' : ''}>Hủy</button><button type="submit" class="primary-button compact" ${state.quoteActionBusyId ? 'disabled' : ''}>${state.quoteActionBusyId ? 'Đang xử lý…' : 'Xác nhận từ chối'}</button></div></form></section></div>` : ''}
+    ${quoteDeleteModal()}
     ${quotePreviewModal()}
   </main></div>`;
+}
+function quoteDeleteModal() {
+  const quote = state.quotes.find((item) => String(item.id) === String(state.quoteDeleteId));
+  if (!quote) return '';
+  const busy = state.quoteActionBusyId === String(quote.id);
+  return `<div class="modal-backdrop quote-delete-backdrop" data-action="cancel-quote-deletion"><section class="customer-modal quote-delete-modal" role="dialog" aria-modal="true" aria-labelledby="quote-delete-title"><div class="quote-delete-icon" aria-hidden="true">!</div><div class="modal-heading"><div><span class="eyebrow">XÓA BÁO GIÁ</span><h2 id="quote-delete-title">Xóa bản nháp này?</h2></div><button class="modal-close" type="button" data-action="cancel-quote-deletion" aria-label="Đóng" ${busy ? 'disabled' : ''}>×</button></div><p>Báo giá <strong>${escapeHtml(quote.quoteNumber)}</strong> cùng các dòng sản phẩm sẽ bị xóa. Thao tác này không thể hoàn tác.</p>${state.error ? alertBox(state.error) : ''}<div class="form-actions"><button type="button" class="secondary-button compact" data-action="cancel-quote-deletion" ${busy ? 'disabled' : ''}>Giữ lại</button><button type="button" class="quote-confirm-delete-button" data-action="confirm-quote-deletion" ${busy ? 'disabled' : ''}>${busy ? 'Đang xóa…' : 'Xóa báo giá'}</button></div></section></div>`;
 }
 function quotePreviewModal() {
   const quote = state.quotes.find((item) => String(item.id) === String(state.quotePreviewId));
@@ -664,7 +675,7 @@ function quoteBuilderPage() {
         </div>
       </section>
       <section class="customer-table-card quote-section">
-        <div class="quote-section-heading"><div><span class="eyebrow">02 · SẢN PHẨM</span><h2>Sản phẩm và dịch vụ</h2></div><button class="secondary-button compact" type="button" data-action="add-quote-line" ${state.quoteLines.length >= 100 ? 'disabled' : ''}>＋ Thêm dòng</button></div>
+        <div class="quote-section-heading"><div><span class="eyebrow">02 · CHI TIẾT BÁO GIÁ</span><h2>Sản phẩm và dịch vụ</h2><p class="quote-hint">Mỗi dòng là một mặt hàng/dịch vụ trong danh mục. Chọn số lượng và chiết khấu; chỉ mặt hàng cùng tiền tệ với Deal mới được dùng.</p></div><button class="secondary-button compact" type="button" data-action="add-quote-line" ${state.quoteLines.length >= 100 ? 'disabled' : ''}>＋ Thêm dòng</button></div>
         ${state.quoteOptionsLoaded && !state.quoteDeals.length ? '<p class="quote-hint">Chưa có Deal bạn có quyền sử dụng. Hãy tạo hoặc được giao một Deal trước khi lập báo giá.</p>' : ''}
         ${deal && !availableProducts.length ? '<p class="quote-hint">Chưa có sản phẩm đang hoạt động cùng đơn vị tiền tệ với Deal. Hãy cập nhật danh mục sản phẩm trước khi lập báo giá.</p>' : ''}
         <div class="quote-lines">${state.quoteLines.map((line, index) => quoteLine(line, index, availableProducts, currency)).join('')}</div>
@@ -1440,6 +1451,26 @@ async function runQuoteWorkflowAction(quoteId, action, payload, successMessage) 
     if (route() === '/quotes') render();
   }
 }
+async function deleteQuote(quoteId) {
+  if (state.quoteActionBusyId) return;
+  const quote = state.quotes.find((item) => String(item.id) === String(quoteId));
+  if (!quote) return;
+  state.quoteActionBusyId = String(quoteId);
+  state.error = '';
+  state.notice = '';
+  render();
+  try {
+    await api(`/quotes/${encodeURIComponent(quoteId)}`, { method: 'DELETE' });
+    state.notice = `Đã xóa báo giá ${quote.quoteNumber}.`;
+    state.quoteDeleteId = '';
+    await loadQuotes();
+  } catch (error) {
+    state.error = error.message || 'Không thể xóa báo giá.';
+  } finally {
+    state.quoteActionBusyId = '';
+    if (route() === '/quotes') render();
+  }
+}
 async function loadQuotes() {
   state.quotesLoading = true;
   state.quotesLoadAttempted = true;
@@ -1767,6 +1798,22 @@ root.addEventListener('click', async (event) => {
       state.quotePreviewId = String(id);
       render();
       break;
+    case 'delete-quote':
+      state.quoteDeleteId = String(id);
+      state.error = '';
+      render();
+      break;
+    case 'confirm-quote-deletion':
+      void deleteQuote(state.quoteDeleteId);
+      break;
+    case 'cancel-quote-deletion':
+      if (button.classList.contains('modal-backdrop') && event.target !== button) break;
+      if (!state.quoteActionBusyId) {
+        state.quoteDeleteId = '';
+        state.error = '';
+        render();
+      }
+      break;
     case 'request-quote-approval':
       void runQuoteWorkflowAction(id, 'approval-request', {}, 'Đã gửi yêu cầu duyệt báo giá.');
       break;
@@ -1797,7 +1844,9 @@ root.addEventListener('click', async (event) => {
       break;
     case 'add-quote-line':
       if (state.quoteLines.length < 100) {
-        state.quoteLines.push({ productId: '', quantity: '1', discountPercent: '0' });
+        const currency = state.quoteDeals.find((deal) => String(deal.id) === state.quoteDealId)?.currency;
+        const firstMatchingProduct = state.quoteProducts.find((product) => product.currency === currency);
+        state.quoteLines.push({ productId: String(firstMatchingProduct?.id || ''), quantity: '1', discountPercent: '0' });
         render();
       }
       break;
@@ -2075,10 +2124,11 @@ root.addEventListener('change', async (event) => {
   } else if (input.dataset.input === 'quote-deal') {
     state.quoteDealId = input.value;
     const currency = state.quoteDeals.find((deal) => String(deal.id) === state.quoteDealId)?.currency;
+    const firstMatchingProduct = state.quoteProducts.find((product) => product.currency === currency);
     state.quoteLines = state.quoteLines.map((line) => ({
       ...line,
       productId: state.quoteProducts.some((product) => String(product.id) === String(line.productId)
-        && product.currency === currency) ? line.productId : '',
+        && product.currency === currency) ? line.productId : String(firstMatchingProduct?.id || ''),
     }));
     render();
   } else if (input.dataset.quoteField === 'productId') {

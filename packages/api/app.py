@@ -2667,7 +2667,7 @@ def quote_create():
 
     def create(cursor):
         cursor.execute(
-            "SELECT id,account_id,owner_user_id,currency FROM deals WHERE id=%s" +
+            "SELECT d.id,d.account_id,d.owner_user_id,d.currency FROM deals d WHERE d.id=%s" +
             (f" AND {scope}" if scope else "") + " FOR UPDATE",
             tuple([data["dealId"]] + scope_values),
         )
@@ -2940,6 +2940,57 @@ def quote_get(quote_id):
         return json_error(str(error), 400)
     result = quote_detail(parsed_id, g.user)
     return jsonify(result) if result else json_error("Không tìm thấy báo giá.", 404)
+
+
+@app.delete("/api/quotes/<quote_id>")
+@auth_required
+def quote_delete(quote_id):
+    """Delete an unsubmitted draft while preserving approved/sent quote history."""
+    try:
+        parsed_id = positive_id(quote_id)
+    except ValueError as error:
+        return json_error(str(error), 400)
+
+    scope, scope_values = quote_scope(g.user)
+
+    def delete(cursor):
+        where = "q.id=%s" + (f" AND {scope}" if scope else "")
+        cursor.execute(
+            "SELECT q.id,q.status,q.approval_status,q.version_group_id,q.version "
+            "FROM quotes q INNER JOIN deals d ON d.id=q.deal_id WHERE " + where + " FOR UPDATE",
+            tuple([parsed_id] + scope_values),
+        )
+        quote = cursor.fetchone()
+        if not quote:
+            return "not_found"
+        if quote["status"] != "DRAFT" or quote["approval_status"] not in ("NOT_REQUESTED", "REJECTED"):
+            return "not_deletable"
+
+        cursor.execute(
+            "SELECT id FROM quotes WHERE previous_version_id=%s LIMIT 1 FOR UPDATE",
+            (parsed_id,),
+        )
+        if cursor.fetchone():
+            return "has_successor"
+
+        # The root version points version_group_id back to itself. Detach that
+        # self-reference before DELETE; other versions remain protected above.
+        if quote["version_group_id"] == parsed_id:
+            cursor.execute(
+                "UPDATE quotes SET version_group_id=NULL WHERE id=%s AND version_group_id=%s",
+                (parsed_id, parsed_id),
+            )
+        cursor.execute("DELETE FROM quotes WHERE id=%s", (parsed_id,))
+        return "deleted" if cursor.rowcount == 1 else "not_found"
+
+    result = transaction(delete)
+    if result == "not_found":
+        return json_error("Không tìm thấy báo giá hoặc bạn không có quyền thao tác.", 404)
+    if result == "not_deletable":
+        return json_error("Chỉ xóa được báo giá nháp chưa gửi duyệt hoặc đã bị từ chối duyệt.", 409)
+    if result == "has_successor":
+        return json_error("Không thể xóa phiên bản đang có phiên bản mới hơn.", 409)
+    return "", 204
 
 
 @app.post("/api/quotes/<quote_id>/approval-request")

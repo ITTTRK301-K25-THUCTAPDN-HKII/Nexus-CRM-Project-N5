@@ -123,6 +123,8 @@ class QuoteApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.json["quote"]["grandTotal"], "59.37")
+        deal_select = cursor.statements[0][0]
+        self.assertIn("FROM deals d WHERE d.id=%s AND d.owner_user_id = %s FOR UPDATE", deal_select)
         insert_quote = next(values for statement, values in cursor.statements if statement.startswith("INSERT INTO quotes"))
         self.assertEqual(insert_quote[6:12], (
             Decimal("59.97"), Decimal("6.00"), Decimal("10.00"),
@@ -130,6 +132,75 @@ class QuoteApiTests(unittest.TestCase):
         ))
         insert_item = next(values for statement, values in cursor.statements if statement.startswith("INSERT INTO quote_items"))
         self.assertEqual(insert_item[3:], (Decimal("3.000"), Decimal("19.99"), Decimal("10.00"), Decimal("53.97")))
+
+    def test_sale_can_delete_own_unsubmitted_draft_quote(self):
+        sale = self.authenticate()
+
+        class FakeCursor:
+            def __init__(self):
+                self.statements = []
+                self.rowcount = 1
+
+            def execute(self, statement, values):
+                self.statements.append((statement, values))
+
+            def fetchone(self):
+                statement = self.statements[-1][0]
+                if "FROM quotes q INNER JOIN deals d" in statement:
+                    return {
+                        "id": 21, "status": "DRAFT", "approval_status": "NOT_REQUESTED",
+                        "version_group_id": 21, "version": 1,
+                    }
+                return None
+
+        cursor = FakeCursor()
+        with patch.object(api, "get_user", return_value=sale), patch.object(
+            api, "transaction", side_effect=lambda work: work(cursor)
+        ):
+            response = self.client.delete("/api/quotes/21")
+
+        self.assertEqual(response.status_code, 204)
+        select = cursor.statements[0][0]
+        self.assertIn("FROM quotes q INNER JOIN deals d", select)
+        self.assertIn("d.owner_user_id = %s", select)
+        self.assertTrue(any(statement.startswith("UPDATE quotes SET version_group_id=NULL") for statement, _ in cursor.statements))
+        self.assertTrue(any(statement.startswith("DELETE FROM quotes") for statement, _ in cursor.statements))
+
+    def test_quote_delete_blocks_pending_approval_and_versions_with_successors(self):
+        sale = self.authenticate()
+
+        class FakeCursor:
+            def __init__(self, approval_status="NOT_REQUESTED", has_successor=False):
+                self.statements = []
+                self.rowcount = 1
+                self.approval_status = approval_status
+                self.has_successor = has_successor
+
+            def execute(self, statement, values):
+                self.statements.append((statement, values))
+
+            def fetchone(self):
+                statement = self.statements[-1][0]
+                if "FROM quotes q INNER JOIN deals d" in statement:
+                    return {
+                        "id": 21, "status": "DRAFT", "approval_status": self.approval_status,
+                        "version_group_id": 21, "version": 1,
+                    }
+                if "previous_version_id=%s" in statement and self.has_successor:
+                    return {"id": 22}
+                return None
+
+        for cursor, expected_message in (
+            (FakeCursor(approval_status="PENDING"), "Chỉ xóa được"),
+            (FakeCursor(has_successor=True), "phiên bản mới hơn"),
+        ):
+            with self.subTest(expected_message=expected_message), patch.object(
+                api, "get_user", return_value=sale
+            ), patch.object(api, "transaction", side_effect=lambda work: work(cursor)):
+                response = self.client.delete("/api/quotes/21")
+            self.assertEqual(response.status_code, 409)
+            self.assertIn(expected_message, response.json["message"])
+            self.assertFalse(any(statement.startswith("DELETE FROM quotes") for statement, _ in cursor.statements))
 
     def test_quote_item_reads_price_snapshot_after_catalog_price_changes(self):
         # The product catalog may have a newer price, but quote detail must use
