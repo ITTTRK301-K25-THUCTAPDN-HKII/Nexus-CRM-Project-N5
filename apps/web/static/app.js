@@ -363,10 +363,12 @@ function revenueChartMarkup(currency, monthKeys, actualByMonth) {
     notation: 'compact', maximumFractionDigits: 1,
   }).format(value);
   const chartHeight = 170;
-  const axisTicks = Array.from({ length: 5 }, (_, index) => {
-    const value = (plotMax * (4 - index)) / 4;
-    return `<span class="revenue-axis-tick">${escapeHtml(formatAxis(value))}</span>`;
-  }).join('');
+  const axisTicks = scaleMax > 0
+    ? Array.from({ length: 5 }, (_, index) => {
+      const value = (plotMax * (4 - index)) / 4;
+      return `<span class="revenue-axis-tick">${escapeHtml(formatAxis(value))}</span>`;
+    }).join('')
+    : '<span class="revenue-axis-tick revenue-axis-tick-empty">0</span>';
   const targetPoints = targetValues.map((target, index) => ({
     x: ((index + 0.5) / Math.max(1, targetValues.length)) * 1000,
     y: 10 + chartHeight - (target / plotMax) * chartHeight,
@@ -385,12 +387,12 @@ function revenueChartMarkup(currency, monthKeys, actualByMonth) {
   }).join('');
   const actualEmptyNotice = actualValues.some((value) => value > 0)
     ? ''
-    : '<p class="revenue-empty-notice">Chưa có doanh thu thực tế trong kỳ. Deal cần ở trạng thái WON và có ngày chốt thuộc khoảng thời gian đang xem.</p>';
+    : '<p class="revenue-empty-notice">Chưa ghi nhận Deal WON trong kỳ. Doanh thu được tính theo ngày chốt; nếu thiếu, hệ thống dùng ngày cập nhật hoặc ngày tạo Deal.</p>';
   const targetInputs = monthKeys.map((month, index) => `<label class="revenue-target-input"><span>${escapeHtml(month.slice(5))}/${escapeHtml(month.slice(0, 4))}</span>
     <input type="number" min="0" step="any" inputmode="decimal" value="${targetValues[index] || ''}" placeholder="Nhập chỉ tiêu" data-input="revenue-target" data-month="${escapeHtml(month)}" data-currency="${escapeHtml(currency)}">
   </label>`).join('');
   return `<article class="funnel-card revenue-card"><header class="funnel-card-heading"><div><h3>Doanh thu thực tế vs chỉ tiêu · ${escapeHtml(currency)}</h3>
-    <p>Doanh thu thực tế lấy từ Deal WON theo ngày chốt. Nhập chỉ tiêu theo từng tháng; chỉ tiêu được lưu trên trình duyệt này.</p></div>
+    <p>Doanh thu thực tế lấy từ Deal WON theo ngày chốt (hoặc ngày cập nhật/ngày tạo nếu Deal cũ chưa có ngày chốt). Nhập chỉ tiêu theo từng tháng; chỉ tiêu được lưu trên trình duyệt này.</p></div>
     <div class="revenue-legend"><span><i class="revenue-legend-actual"></i>Thực tế</span><span><i class="revenue-legend-target"></i>Chỉ tiêu</span></div></header>
     <div class="revenue-chart-scroll"><div class="revenue-plot"><div class="revenue-y-axis" aria-label="Thang doanh thu ${escapeHtml(currency)}"><div class="revenue-axis-ticks">${axisTicks}</div><span class="revenue-axis-unit">${escapeHtml(currency)}</span></div><div class="revenue-chart ${scaleMax ? '' : 'revenue-chart-empty'}" style="--revenue-month-count:${monthKeys.length}">${bars}${targetLine}</div></div></div>
     ${actualEmptyNotice}
