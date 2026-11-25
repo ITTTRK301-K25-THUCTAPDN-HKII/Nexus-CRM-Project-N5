@@ -359,22 +359,22 @@ h2, h1, p { margin-top: 0; }
 .revenue-axis-tick { display: flex; align-items: center; justify-content: flex-end; white-space: nowrap; line-height: 1; }
 .revenue-axis-tick-empty { grid-row: 5; }
 .revenue-axis-unit { align-self: end; color: #94a3b8; font-size: 9px; }
-.revenue-chart { position: relative; display: grid; grid-template-columns: repeat(var(--revenue-month-count), minmax(64px, 1fr)); gap: 10px; min-width: 0; height: 252px; min-height: 252px; align-items: end; border-bottom: 1px solid #e2e8f0; }
-.revenue-month-column { position: relative; z-index: 1; display: grid; grid-template-rows: 190px auto auto; height: 100%; justify-items: center; align-content: end; gap: 5px; }
-.revenue-bars { display: flex; align-items: end; justify-content: center; gap: 6px; width: 100%; height: 190px; min-height: 0; border-bottom: 1px dashed #e2e8f0; background: repeating-linear-gradient(to top, transparent 0, transparent 37px, #f1f5f9 38px, transparent 39px); }
-.revenue-bar { display: block; width: min(28px, 38%); min-height: 0; border-radius: 5px 5px 0 0; transition: height .2s ease; }
-.revenue-bar-actual { background: #4f46e5; }
-.revenue-zero-marker { display: block; width: 10px; height: 3px; border-radius: 3px; background: #4f46e5; }
-.revenue-target-line { position: absolute; z-index: 2; inset: 0 auto auto 0; width: 100%; height: 190px; overflow: visible; pointer-events: none; }
+.revenue-chart { position: relative; display: grid; grid-template-columns: repeat(var(--revenue-month-count), minmax(64px, 1fr)); gap: 10px; min-width: 0; height: 252px; min-height: 252px; align-items: start; border-bottom: 1px solid #e2e8f0; }
+.revenue-chart::before { position: absolute; z-index: 0; inset: 0 auto auto 0; width: 100%; height: 190px; background: repeating-linear-gradient(to top, transparent 0, transparent 46px, #eef2f8 47px, transparent 48px); content: ''; pointer-events: none; }
+.revenue-month-column { position: relative; z-index: 1; display: grid; grid-template-rows: 190px auto auto; height: 252px; justify-items: center; align-content: start; gap: 5px; }
+.revenue-bars { width: 100%; height: 190px; border-bottom: 1px dashed #cbd5e1; background: transparent; }
+.revenue-actual-bars { position: absolute; z-index: 2; inset: 0 auto auto 0; width: 100%; height: 190px; overflow: visible; pointer-events: none; }
+.revenue-actual-column { fill: #4f46e5; filter: drop-shadow(0 3px 4px #4f46e533); }
+.revenue-actual-zero { stroke: #4f46e5; stroke-width: 3; stroke-linecap: round; }
+.revenue-target-line { position: absolute; z-index: 3; inset: 0 auto auto 0; width: 100%; height: 190px; overflow: visible; pointer-events: none; }
 .revenue-target-line polyline,
 .revenue-target-line line { fill: none; stroke: #f59e0b; stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
 .revenue-target-line circle { fill: #f59e0b; stroke: #fff; stroke-width: 2; vector-effect: non-scaling-stroke; }
-.revenue-month-label { color: #64748b; font-size: 10px; white-space: nowrap; }
+.revenue-month-label { justify-self: center; color: #64748b; font-size: 10px; white-space: nowrap; }
 .revenue-month-values { display: grid; justify-items: center; color: #64748b; font-size: 9px; line-height: 1.35; white-space: nowrap; }
 .revenue-month-values span:first-child { color: #4f46e5; }
 .revenue-month-values span:last-child { color: #b77908; }
 .revenue-empty-notice { margin: 8px 0 0; padding: 9px 11px; border-radius: 8px; background: #f8fafc; color: #64748b; font-size: 11px; line-height: 1.5; }
-.revenue-chart-empty .revenue-bars { background: repeating-linear-gradient(to top, transparent 0, transparent 37px, #f1f5f9 38px, transparent 39px); }
 .revenue-target-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(135px, 1fr)); gap: 10px; margin-top: 16px; }
 .revenue-target-input { display: grid; gap: 5px; color: #64748b; font-size: 10px; font-weight: 700; }
 .revenue-target-input input { width: 100%; min-width: 0; min-height: 35px; padding: 6px 9px; border: 1px solid #dbe3f0; border-radius: 7px; color: #334155; font: inherit; font-size: 12px; }

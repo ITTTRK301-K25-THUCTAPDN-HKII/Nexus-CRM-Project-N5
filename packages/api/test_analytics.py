@@ -127,7 +127,8 @@ class SalesAnalyticsApiTests(unittest.TestCase):
         self.assertIn("COALESCE(d.closed_date,DATE(d.updated_at),DATE(d.created_at)) >= %s", sql)
         self.assertIn("COALESCE(d.closed_date,DATE(d.updated_at),DATE(d.created_at)) < %s", sql)
         self.assertIn("d.owner_user_id IN (SELECT id FROM users WHERE role='Sale')", sql)
-        self.assertIn("GROUP BY DATE_FORMAT(COALESCE(d.closed_date,DATE(d.updated_at),DATE(d.created_at))", sql)
+        self.assertIn("DATE_FORMAT(COALESCE(d.closed_date,DATE(d.updated_at),DATE(d.created_at)),'%Y-%m') AS month", sql)
+        self.assertIn("GROUP BY DATE_FORMAT(COALESCE(d.closed_date,DATE(d.updated_at),DATE(d.created_at)),'%Y-%m'),d.currency", sql)
         self.assertIn("COALESCE(d.closed_amount,d.amount)", sql)
         self.assertEqual(values, (date(2026, 1, 1), date(2026, 3, 1)))
 
