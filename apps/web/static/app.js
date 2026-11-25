@@ -54,6 +54,7 @@ const state = {
   taskAssigneesLoaded: false,
   taskFormOpen: false,
   taskEdit: null,
+  taskDeleteConfirm: null,
   appointments: [],
   appointmentsLoaded: false,
   calendarCursor: new Date(),
@@ -265,7 +266,7 @@ function authPage() {
     <p class="legal">Phiên đăng nhập được bảo vệ bằng cookie HttpOnly.</p></div></section></main>`;
 }
 function forgotPage() {
-  const messages = state.mailbox.map((item) => `<article class="mail-item"><span>${escapeHtml(item.recipient)} · ${escapeHtml(item.subject)}</span><a href="${escapeHtml(item.resetUrl)}">Mở liên kết đặt lại mật khẩu</a></article>`).join('');
+  const messages = state.mailbox.map((item) => `<article class="mail-item"><span>${escapeHtml(item.recipient)} · ${escapeHtml(item.subject)}</span><a href="${escapeHtml(item.resetUrl)}" data-full-page="true">Mở liên kết đặt lại mật khẩu</a></article>`).join('');
   return `<main class="simple-page"><section class="simple-card"><a class="back-link" href="/login">← Quay lại đăng nhập</a>
     <div class="icon-tile">✉</div><span class="eyebrow">KHÔI PHỤC TÀI KHOẢN</span><h1>Quên mật khẩu?</h1>
     <p class="muted">Nhập email đã đăng ký. Nếu tài khoản tồn tại, hướng dẫn đặt lại sẽ được gửi đến hộp thư.</p>
@@ -629,7 +630,7 @@ function productsPage() {
   const activeCount = state.products.filter((product) => product.isActive).length;
   const inactiveCount = state.products.length - activeCount;
   const draft = state.productDraft || {};
-  const productCurrencies = [...new Set(['VND', 'USD', 'EUR', draft.currency || 'VND'])];
+  const productCurrencies = [...new Set(['VND', 'USD', draft.currency || 'VND'])];
   const form = state.productFormOpen ? `<section class="product-form-card">
     <div class="product-form-heading"><div><span class="eyebrow">${state.productEdit ? 'CẬP NHẬT DANH MỤC' : 'THÊM VÀO DANH MỤC'}</span><h2>${state.productEdit ? 'Chỉnh sửa sản phẩm hoặc dịch vụ' : 'Thêm sản phẩm hoặc dịch vụ'}</h2></div>
       <button type="button" class="icon-button" data-action="close-product-form" aria-label="Đóng biểu mẫu">×</button></div>
@@ -741,8 +742,8 @@ function tasksPage() {
       ${state.tasks.map((task) => `<tr class="${taskOverdue(task) ? 'task-row-overdue' : ''}"><td><strong>${escapeHtml(task.title)}</strong>${taskOverdue(task) ? '<span class="overdue-label">Quá hạn</span>' : ''}</td><td>${escapeHtml(task.assignee_name || '—')}</td><td>${taskDate(task.due_date)}</td>
         <td><span class="priority-pill priority-${String(task.priority || 'MEDIUM').toLowerCase()}">${escapeHtml(taskPriorityLabels[task.priority] || task.priority)}</span></td>
         <td><select class="task-status-select" aria-label="Trạng thái ${escapeHtml(task.title)}" data-task-status="${task.id}">${Object.entries(taskStatusLabels).map(([value,label]) => `<option value="${value}" ${task.status === value ? 'selected' : ''}>${label}</option>`).join('')}</select></td>
-        <td><button class="text-button" data-action="edit-task" data-id="${task.id}">Sửa</button></td></tr>`).join('') || '<tr><td class="empty-row" colspan="6">Chưa có Task phù hợp.</td></tr>'}
-      </tbody></table></div></section></main></div>`;
+        <td><div class="task-row-actions"><button class="text-button task-edit-button" data-action="edit-task" data-id="${task.id}">Sửa</button><button class="text-button task-delete-button" data-action="delete-task" data-id="${task.id}">Xóa</button></div></td></tr>`).join('') || '<tr><td class="empty-row" colspan="6">Chưa có Task phù hợp.</td></tr>'}
+      </tbody></table></div></section>${state.taskDeleteConfirm ? `<div class="modal-backdrop" data-action="cancel-delete-task"><section class="customer-modal task-delete-modal" role="dialog" aria-modal="true" aria-labelledby="task-delete-title"><div class="modal-heading"><div><span class="eyebrow">XÁC NHẬN XÓA</span><h2 id="task-delete-title">Xóa công việc?</h2></div><button class="modal-close" data-action="cancel-delete-task" aria-label="Đóng">×</button></div><p>Bạn có chắc muốn xóa <strong>${escapeHtml(state.taskDeleteConfirm.title)}</strong>? Thao tác này không thể hoàn tác.</p><div class="form-actions"><button class="secondary-button compact" data-action="cancel-delete-task">Hủy</button><button class="task-confirm-delete" data-action="confirm-delete-task">Xóa Task</button></div></section></div>` : ''}</main></div>`;
 }
 function calendarDateKey(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -1671,7 +1672,7 @@ function render() {
 }
 root.addEventListener('click', async (event) => {
   const anchor = event.target.closest('a[href]');
-  if (anchor && anchor.origin === location.origin && anchor.getAttribute('href').startsWith('/')
+  if (anchor && !anchor.dataset.fullPage && anchor.origin === location.origin && anchor.getAttribute('href').startsWith('/')
     && !anchor.pathname.startsWith('/api/')) {
     event.preventDefault();
     navigate(anchor.getAttribute('href'));
@@ -1901,6 +1902,21 @@ root.addEventListener('click', async (event) => {
     case 'edit-task':
       state.taskEdit = state.tasks.find((task) => Number(task.id) === id) || null;
       state.taskFormOpen = Boolean(state.taskEdit); state.error = ''; render(); break;
+    case 'delete-task':
+      state.taskDeleteConfirm = state.tasks.find((task) => Number(task.id) === id) || null; state.error = ''; render(); break;
+    case 'cancel-delete-task':
+      if (button.classList.contains('modal-backdrop') && event.target !== button) break;
+      state.taskDeleteConfirm = null; render(); break;
+    case 'confirm-delete-task': {
+      const task = state.taskDeleteConfirm;
+      if (!task) break;
+      try {
+        await api(`/tasks/${encodeURIComponent(task.id)}`, { method: 'DELETE' });
+        state.taskDeleteConfirm = null; state.notice = `Đã xóa Task “${task.title}”.`; state.error = '';
+        state.tasksLoaded = false; taskRequest = ''; await loadTasks();
+      } catch (error) { state.error = error.message; }
+      render(); break;
+    }
     case 'calendar-prev':
     case 'calendar-next': {
       const direction = button.dataset.action === 'calendar-prev' ? -1 : 1;
@@ -2342,8 +2358,14 @@ window.addEventListener('popstate', () => {
 });
 (async function start() {
   try {
-    const data = await api('/auth/me');
-    state.user = data.user;
+    // Public auth pages must render without requiring an existing login session.
+    // Otherwise the /auth/me refresh flow redirects password-reset links to /login.
+    if (['/login', '/forgot-password', '/reset-password'].includes(route())) {
+      state.user = null;
+    } else {
+      const data = await api('/auth/me');
+      state.user = data.user;
+    }
   } catch (error) {
     if (!/Vui lòng đăng nhập|hết hạn|không hoạt động/i.test(error.message)) console.error(error);
     state.user = null;
