@@ -820,6 +820,15 @@ h2, h1, p { margin-top: 0; }
 .timeline-item span { color: #8b97aa; font-size: 9px; }
 .timeline-item p { margin: 2px 0 0; color: #69778d; font-size: 10px; }
 .activity-section { grid-column: 1 / -1; }
+.activity-entry-form { margin: 14px 0 18px; padding: 15px; border: 1px solid #e5eaf3; border-radius: 11px; background: #fbfcff; }
+.activity-entry-fields { display: grid; grid-template-columns: minmax(160px, .7fr) minmax(220px, 1fr); gap: 12px; }
+.activity-entry-fields label { display: grid; gap: 6px; color: #536078; font-size: 11px; font-weight: 700; }
+.activity-entry-fields input, .activity-entry-fields select, .activity-entry-fields textarea { width: 100%; min-height: 38px; padding: 8px 10px; border: 1px solid #dce4f0; border-radius: 8px; background: #fff; color: #34435d; font: inherit; font-size: 12px; }
+.activity-entry-fields textarea { resize: vertical; }
+.activity-content-field { grid-column: 1 / -1; }
+.activity-entry-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 10px; }
+.activity-entry-footer .alert { margin: 0; }
+@media (max-width: 640px) { .activity-entry-fields { grid-template-columns: 1fr; } .activity-content-field { grid-column: auto; } .activity-entry-footer { align-items: stretch; flex-direction: column; } }
 .customer-loading { min-height: 230px; }
 .customer-content .account-heading p { font-size: 13px; }
 .customer-content .summary-card > span { font-size: 10px; }

@@ -79,6 +79,7 @@ const state = {
   geminiSummary: null,
   geminiDraft: null,
   interactionSummary: null,
+  activitySaving: false,
   geminiTaskNotice: '',
   emailCopied: '',
   mailbox: [],
@@ -1314,6 +1315,7 @@ function accountDetailPage() {
     <article class="table-card detail-section"><div class="detail-section-heading"><div class="icon-tile small-tile">◇</div><div><strong>Cơ hội kinh doanh</strong><span>${deals.length} cơ hội gần đây</span></div></div>
     ${deals.length ? `<div class="related-list">${deals.map((d) => `<div class="related-item deal-item"><div class="related-main"><strong>${escapeHtml(d.name)}</strong><span>${escapeHtml(d.stage)} · ${escapeHtml(d.probability)}%</span></div><strong>${escapeHtml(d.currency)} ${Number(d.amount).toLocaleString('vi-VN')}</strong></div>`).join('')}</div>` : '<p class="empty-state">Chưa có cơ hội kinh doanh.</p>'}</article>
     <article class="table-card detail-section activity-section"><div class="detail-section-heading"><div class="icon-tile small-tile">◷</div><div><strong>Lịch sử tương tác</strong><span>${activities.length} hoạt động gần đây · mới nhất trước</span></div><button class="secondary-button compact interaction-summary-trigger" data-action="summarize-activities" ${state.interactionSummary?.loading ? 'disabled' : ''}>${state.interactionSummary?.loading ? 'Đang tóm tắt…' : '✦ Tóm tắt AI'}</button></div>
+    <form class="activity-entry-form" data-form="activity"><div class="activity-entry-fields"><label>Loại tương tác<select name="type"><option value="CALL">Cuộc gọi</option><option value="EMAIL">Email</option><option value="MEETING">Cuộc họp</option><option value="NOTE">Ghi chú</option></select></label><label>Tiêu đề<input name="subject" required minlength="1" maxlength="180" placeholder="Ví dụ: Gọi trao đổi nhu cầu"></label><label class="activity-content-field">Nội dung<textarea name="content" required minlength="1" maxlength="5000" rows="3" placeholder="Ghi lại nội dung và kết quả trao đổi..."></textarea></label></div><div class="activity-entry-footer">${alertBox(state.error)}<button class="primary-button compact" type="submit" ${state.activitySaving ? 'disabled' : ''}>${state.activitySaving ? 'Đang lưu…' : '＋ Ghi nhận tương tác'}</button></div></form>
     ${interactionSummaryPanel()}
     ${activities.length ? `<div class="timeline activity-timeline">${activities.map(activityTimelineItem).join('')}</div>` : '<p class="empty-state">Chưa có lịch sử tương tác.</p>'}</article></section></main></div>`;
 }
@@ -2193,6 +2195,16 @@ root.addEventListener('submit', async (event) => {
       state.user = result.user;
       state.loginBusy = false;
       navigate(result.user.role === 'Admin' ? '/admin/users' : '/workspace', true);
+    } else if (form.dataset.form === 'activity') {
+      const accountId = state.detail?.account?.id;
+      if (!accountId) throw new Error('Không tìm thấy Account cần ghi tương tác.');
+      state.activitySaving = true; state.error = ''; render();
+      await api('/activities', { method: 'POST', body: JSON.stringify({
+        ...data, customer_type: 'ACCOUNT', customer_id: accountId,
+      }) });
+      state.activitySaving = false;
+      state.notice = 'Đã ghi nhận tương tác với khách hàng.';
+      await loadDetail(accountId);
     } else if (form.dataset.form === 'forgot') {
       const result = await api('/auth/forgot-password', { method: 'POST', body: JSON.stringify(data) });
       state.notice = result.message;
@@ -2336,6 +2348,7 @@ root.addEventListener('submit', async (event) => {
     }
   } catch (error) {
     state.loginBusy = false;
+    if (form.dataset.form === 'activity') state.activitySaving = false;
     state.error = error.message;
     render();
   }
